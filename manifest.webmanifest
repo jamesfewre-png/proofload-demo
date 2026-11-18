@@ -1,0 +1,15 @@
+{
+  "name": "Proofload",
+  "short_name": "Proofload",
+  "description": "Lifting gear inspections and reports, on site, with no signal needed.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#E7EBEE",
+  "theme_color": "#17212B",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

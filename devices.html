@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proofload on a phone and a tablet</title>
+<style>
+  body { margin: 0; background: #CDD4DA; font: 15px system-ui, sans-serif; color: #17212B; }
+  .bar { display: flex; gap: 8px; padding: 10px 14px; align-items: center; }
+  .bar a { padding: 8px 14px; border-radius: 8px; background: #fff; color: inherit; text-decoration: none; font-weight: 650; }
+  .bar a.on { background: #17212B; color: #fff; }
+  .stage { display: flex; justify-content: center; padding: 6px 14px 20px; }
+  iframe { border: 10px solid #17212B; border-radius: 30px; background: #fff; display: block; }
+</style>
+</head>
+<body>
+<div class="bar"><b>Preview as</b><a href="?d=phone" id="l-phone">Phone</a><a href="?d=tablet" id="l-tablet">Tablet, upright</a><a href="index.html">Full window</a></div>
+<div class="stage"><iframe id="f" src="index.html" title="Proofload"></iframe></div>
+<script>
+  var d = new URLSearchParams(location.search).get('d') === 'tablet' ? 'tablet' : 'phone';
+  var f = document.getElementById('f');
+  f.style.width = (d === 'tablet' ? 820 : 390) + 'px';
+  f.style.height = (d === 'tablet' ? 1100 : 700) + 'px';
+  document.getElementById('l-' + d).className = 'on';
+</script>
+</body>
+</html>
