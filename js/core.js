@@ -183,25 +183,64 @@ function gate(v) {
   if (!L.length) out.push({ kind: 'block', text: 'Add at least one item to this visit' });
   L.forEach(i => {
     const a = asset(i.assetId), t = typeOf(a), label = itemLabel(a);
-    if (!i.result) out.push({ kind: 'block', text: label + ' has no result', item: i.id });
-    if (!a.ident.trim()) out.push({ kind: 'block', text: t.name + ' has no ID or serial number', item: i.id });
-    if (t.wll && !String(a.wll).trim() && i.result && i.result !== 'missing') out.push({ kind: 'block', text: label + ' has no working load limit', item: i.id });
+    if (!i.result) out.push({ kind: 'block', text: label + ' has no result', fix: 'add a result', item: i.id });
+    if (!a.ident.trim()) out.push({ kind: 'block', text: t.name + ' has no ID or serial number', fix: 'add an ID', item: i.id });
+    if (t.wll && !String(a.wll).trim() && i.result && i.result !== 'missing') out.push({ kind: 'block', text: label + ' has no working load limit', fix: 'add the working load limit', item: i.id });
     if (i.result === 'fail' || i.result === 'repair') {
-      if (!i.defects.length && !i.notes.trim()) out.push({ kind: 'block', text: label + ' needs a defect or a note explaining the result', item: i.id });
-      if (!i.photos.length) out.push({ kind: 'block', text: label + ' needs a photo of the defect', item: i.id });
+      if (!i.defects.length && !i.notes.trim()) out.push({ kind: 'block', text: label + ' needs a defect or a note explaining the result', fix: 'add a defect or a note', item: i.id });
+      if (!i.photos.length) out.push({ kind: 'block', text: label + ' needs a photo of the defect', fix: 'add a photo of the defect', item: i.id });
     }
-    if (S.settings.photoEveryItem && i.result === 'pass' && !i.photos.length) out.push({ kind: 'block', text: label + ' needs a photo', item: i.id });
+    if (S.settings.photoEveryItem && i.result === 'pass' && !i.photos.length) out.push({ kind: 'block', text: label + ' needs a photo', fix: 'add a photo', item: i.id });
     /* a voice draft is only a draft until the inspector has checked it */
     const open = (i.voice || []).filter(n => n.status !== 'checked'), typing = open.filter(n => n.status === 'queued' || n.status === 'transcribing').length;
     const packReady = typeof Voice !== 'undefined' && Voice.state === 'ready';
-    if (typing && !packReady) out.push({ kind: 'block', text: label + (typing === 1 ? ' has a voice note waiting for a draft' : ` has ${typing} voice notes waiting for a draft`) + '. Download voice notes in Settings, or type it yourself', item: i.id });
-    else if (typing) out.push({ kind: 'block', text: label + (typing === 1 ? ' has a voice note still being typed' : ` has ${typing} voice notes still being typed`), item: i.id });
-    else if (open.length) out.push({ kind: 'block', text: label + (open.length === 1 ? ' has a voice note to check' : ` has ${open.length} voice notes to check`), item: i.id });
+    if (typing && !packReady) out.push({ kind: 'block', text: label + (typing === 1 ? ' has a voice note waiting for a draft' : ` has ${typing} voice notes waiting for a draft`) + '. Download voice notes in Settings, or type it yourself', fix: typing === 1 ? 'download voice notes in Settings or type the note yourself' : 'download voice notes in Settings or type the notes yourself', item: i.id });
+    else if (typing) out.push({ kind: 'block', text: label + (typing === 1 ? ' has a voice note still being typed' : ` has ${typing} voice notes still being typed`), fix: typing === 1 ? 'wait for the voice note to finish typing' : `wait for ${typing} voice notes to finish typing`, item: i.id });
+    else if (open.length) out.push({ kind: 'block', text: label + (open.length === 1 ? ' has a voice note to check' : ` has ${open.length} voice notes to check`), fix: open.length === 1 ? 'check the voice note' : `check ${open.length} voice notes`, item: i.id });
   });
   if (!String(v.inspector || '').trim()) out.push({ kind: 'block', text: 'Inspector name is missing', focus: 'inspector' });
   if (!v.signInspector) out.push({ kind: 'block', text: 'Inspector signature is missing', sign: 'inspector' });
   if (!v.signClient) out.push({ kind: 'advise', text: 'No client signature yet. You can still issue the report.', sign: 'client' });
   return out;
+}
+
+/* One readiness line per item: several problems on one item merge into a single line. */
+const joinAnd = a => a.length < 2 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+function groupGate(list) {
+  const by = new Map(), out = [];
+  list.forEach(g => {
+    if (!g.item) { out.push(g); return; }
+    if (!by.has(g.item)) { const e = { items: [], at: out.length }; by.set(g.item, e); out.push(null); }
+    by.get(g.item).items.push(g);
+  });
+  by.forEach((e, id) => {
+    const L = e.items;
+    if (L.length === 1) { out[e.at] = L[0]; return; }
+    const i = insp(id), a = i && asset(i.assetId), ident = a ? String(a.ident || '').trim() : '';
+    const label = typeOf(a).name + (ident ? ' ' + ident : '');
+    const fixes = L.map(x => x.fix).filter(Boolean), idf = fixes.filter(f => f === 'add an ID');
+    out[e.at] = { kind: L.some(x => x.kind === 'block') ? 'block' : 'advise', text: label + ': ' + joinAnd(idf.concat(fixes.filter(f => f !== 'add an ID'))), item: id };
+  });
+  return out;
+}
+const gateLines = v => groupGate(gate(v));
+
+/* Phone as typed is stored; only the tel: link is normalised. */
+function telHref(p) {
+  const s = String(p == null ? '' : p).trim(), d = s.replace(/\D/g, '');
+  return d ? 'tel:' + (s[0] === '+' ? '+' : '') + d : '';
+}
+
+/* Another register item for the same client with the same ID. A re-inspection reuses the asset id, so it never matches itself. */
+function dupIdent(a, visitId) {
+  const id = a && String(a.ident || '').trim().toLowerCase(); if (!id) return null;
+  const other = S.assets.find(o => o.id !== a.id && o.clientId === a.clientId && String(o.ident || '').trim().toLowerCase() === id);
+  if (!other) return null;
+  const mine = S.inspections.filter(i => i.assetId === other.id), l = lastInsp(other.id), ov = mine.map(i => visit(i.visitId)).find(Boolean);
+  const where = mine.some(i => i.visitId === visitId) ? 'on this visit'
+    : l ? 'last inspected ' + fmtDate(l.v.date) + (l.v.reportNo ? ', report ' + l.v.reportNo : '')
+    : ov ? 'on the visit of ' + fmtDate(ov.date) : 'on the register';
+  return { other, where: (other.retired ? 'retired, ' : '') + where };
 }
 
 /* Every item has a voice list. A note that was being typed when the app closed goes back in the queue. */

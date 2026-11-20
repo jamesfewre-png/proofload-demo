@@ -214,6 +214,9 @@ h3 { font-size: 17px; font-weight: 700; }
 
 /* ---------- forms ---------- */
 .field { display: block; margin-bottom: 14px; }
+.fieldwarn { display: flex; gap: 8px; align-items: flex-start; margin: -6px 0 14px; padding: 10px 12px; border-left: 4px solid var(--repair); border-radius: var(--r-s); background: var(--repair-bg); color: var(--repair); font-size: 15px; font-weight: 600; }
+.fieldwarn .ic { flex: none; margin-top: 1px; }
+.btn-wrap { padding-top: 10px; padding-bottom: 10px; white-space: normal; text-align: left; }
 .field > span, .label { display: block; font-size: 14px; font-weight: 650; color: var(--ink2); margin-bottom: 5px; }
 .input {
   width: 100%; min-height: var(--tap); padding: 10px 12px; border: 1.5px solid var(--line); border-radius: var(--r-s);

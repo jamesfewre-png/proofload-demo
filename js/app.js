@@ -122,7 +122,7 @@ function initSigPad() {
 /* ---------- new-visit sheet state ---------- */
 function syncNv() {
   const f = $('#overlay form'); if (!f || !UI.nv) return;
-  ['name', 'site', 'contact', 'email', 'date'].forEach(k => { if (f.elements[k]) UI.nv[k] = f.elements[k].value; });
+  ['name', 'site', 'contact', 'phone', 'email', 'date'].forEach(k => { if (f.elements[k]) UI.nv[k] = f.elements[k].value; });
   if (f.elements.bring) UI.nv.bring = f.elements.bring.checked;
 }
 
@@ -131,7 +131,7 @@ const ACT = {
   nav(el) { go({ name: el.dataset.to }); },
   'open-visit'(el) { const v = visit(el.dataset.id); if (!v) return; UI.filter = 'all'; go(v.status === 'issued' ? { name: 'report', id: v.id } : { name: 'visit', id: v.id, panel: '' }); },
   'new-visit'() {
-    UI.nv = { mode: S.clients.length ? 'existing' : 'new', clientId: S.clients.length === 1 ? S.clients[0].id : '', name: '', site: '', contact: '', email: '', date: todayISO(), bring: true };
+    UI.nv = { mode: S.clients.length ? 'existing' : 'new', clientId: S.clients.length === 1 ? S.clients[0].id : '', name: '', site: '', contact: '', phone: '', email: '', date: todayISO(), bring: true };
     openOverlay(sheetNewVisit());
   },
   'nv-mode'(el) { syncNv(); UI.nv.mode = el.dataset.mode; openOverlay(sheetNewVisit(), true); },
@@ -213,7 +213,7 @@ const ACT = {
   },
 
   'gate-go'(el) {
-    const g = gate(curVisit())[+el.dataset.idx]; if (!g) return;
+    const g = gateLines(curVisit())[+el.dataset.idx]; if (!g) return;
     if (g.item) setPanel('item', g.item);
     else if (g.sign) ACT.sign({ dataset: { who: g.sign } });
     else if (g.nav) go({ name: g.nav });
@@ -316,7 +316,7 @@ document.addEventListener('submit', e => {
     syncNv(); const nv = UI.nv; let cid = nv.clientId;
     if (nv.mode === 'new') {
       if (!nv.name.trim()) return;
-      const c = { id: 'c' + uid(), name: nv.name.trim(), site: nv.site.trim(), contact: nv.contact.trim(), email: nv.email.trim(), phone: '' };
+      const c = { id: 'c' + uid(), name: nv.name.trim(), site: nv.site.trim(), contact: nv.contact.trim(), email: nv.email.trim(), phone: (nv.phone || '').trim() };
       S.clients.push(c); cid = c.id;
     }
     if (!cid) return;
@@ -352,7 +352,7 @@ document.addEventListener('input', e => {
   setPath(obj, path, val); save();
   if (!v) return;
   if (scope === 'v' && path === 'date') visitInsps(v.id).forEach(i => { if (i.result === 'pass') i.nextDue = addMonths(v.date, typeOf(asset(i.assetId)).months); });
-  if (scope === 'a' && path === 'ident') { const t = $('#paneDetail .title'); if (t) t.textContent = val || 'New item'; }
+  if (scope === 'a' && path === 'ident') { const t = $('#paneDetail .title'); if (t) t.textContent = val || 'New item'; const w = $('#identWarn'), ca = curAsset(), ci = curInsp(); if (w && ca && ci) w.innerHTML = identWarn(ca, ci.visitId); }
   if (isWide() || scope === 'c' || scope === 'v') renderList();
   if (scope === 'v') refreshGate();
 });

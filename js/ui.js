@@ -25,6 +25,8 @@ const ICONS = {
   download: '<path d="M12 4v11M8 11l4 4 4-4M5 19h14"/>',
   table: '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 10h16M10 5v14"/>',
   search: '<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>',
+  phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
   alert: '<path d="M12 4l9 16H3zM12 10v4M12 17v.5"/>',
   pen: '<path d="M4 20l4-1L19 8l-3-3L5 16z"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',
@@ -208,6 +210,10 @@ function pickPanel() {
   return `<div class="pane-head"><div class="bar">${backBtn()}<div class="grow"><div class="title sm">What are you adding?</div></div></div></div>
     <div class="pane-body" data-scroll="pick">${typeGrid('pick-type', '')}</div>`;
 }
+function identWarn(a, visitId) {
+  const d = a && dupIdent(a, visitId); if (!d) return '';
+  return `<div class="fieldwarn">${ic('alert', 20)}<span>Another item for this client already has this ID: ${esc(typeOf(d.other).name)}, ${esc(d.where)}. Check the tag before you carry on.</span></div>`;
+}
 function itemPanel(v, i) {
   const a = asset(i.assetId), t = typeOf(a);
   const bad = i.result === 'fail' || i.result === 'repair';
@@ -225,6 +231,7 @@ function itemPanel(v, i) {
       <button class="typeline" data-act="toggle-types" aria-expanded="${UI.typeOpen}"><span class="glyph">${glyph(a.type)}</span><span class="grow">${t.name}<small>Tap to change the type</small></span>${ic('chevron', 20)}</button>
       ${UI.typeOpen ? '<div style="margin:-4px 0 16px">' + typeGrid('set-type', a.type) + '</div>' : ''}
       <label class="field"><span>ID or serial number</span><input class="input input-id" id="identInput" data-bind="a:ident" value="${esc(a.ident)}" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="As stamped or tagged"></label>
+      <div id="identWarn" aria-live="polite">${identWarn(a, i.visitId)}</div>
 
       <div class="section"><span class="label">Result</span><div class="results">${['pass', 'fail', 'repair', 'missing'].map(resBtn).join('')}</div></div>
       ${bad ? `<div class="section"><span class="label">What is wrong</span><div class="chips">${allDefects.map(d => `<button class="chip" data-act="toggle-defect" data-defect="${esc(d)}" aria-pressed="${i.defects.includes(d)}">${esc(d)}</button>`).join('')}</div></div>` : ''}
@@ -295,7 +302,7 @@ function voiceCardInner() {
     <div class="btn-row" style="margin-top:12px">${btns}</div>`;
 }
 function gateBox(v) {
-  const g = gate(v), blocks = g.filter(x => x.kind === 'block'), adv = g.filter(x => x.kind === 'advise');
+  const g = gateLines(v), blocks = g.filter(x => x.kind === 'block'), adv = g.filter(x => x.kind === 'advise');
   const li = (x, idx) => {
     const inner = `<span class="n">${ic(x.kind === 'block' ? 'alert' : 'pen', 20)}</span><span>${esc(x.text)}</span>${ic('chevron', 18)}`;
     return `<li class="${x.kind}"><button data-act="gate-go" data-idx="${idx}">${inner}</button></li>`;
@@ -340,7 +347,8 @@ function detailsPanel(v) {
     <div class="pane-body" data-scroll="details">
       ${field('Client', 'c:name', c.name, 'autocomplete="off"')}
       ${field('Site', 'c:site', c.site, 'autocomplete="off" placeholder="Workshop, 12 Example Rd, Welshpool"')}
-      <div class="cols">${field('Contact name', 'c:contact', c.contact, 'autocomplete="off"')}${field('Contact email', 'c:email', c.email, 'type="email" autocomplete="off"')}</div>
+      <div class="cols">${field('Contact name', 'c:contact', c.contact, 'autocomplete="off"')}${field('Contact phone', 'c:phone', c.phone, 'type="tel" inputmode="tel" autocomplete="off"')}</div>
+      ${field('Contact email', 'c:email', c.email, 'type="email" autocomplete="off"')}
       ${field('Inspection date', 'v:date', v.date, 'type="date"')}
       <div class="section"><span class="label">Tag colour for this visit</span>
         <div class="swatches">${Object.keys(TAGS).map(k => `<button class="swatch" data-act="set-tag" data-tag="${k}" aria-pressed="${v.tag === k}" aria-label="${TAGS[k].name} tag">${tagChip(k, TAGS[k].name)}</button>`).join('')}</div>
@@ -441,6 +449,13 @@ function viewRegister(r) {
 }
 
 /* ---------- due ---------- */
+function contactActions(c) {
+  const tel = telHref(c.phone), mail = String(c.email || '').trim(), name = String(c.contact || '').trim(), hasMail = mail.includes('@');
+  const call = tel ? `<a class="btn btn-secondary btn-block btn-wrap" href="${esc(tel)}">${ic('phone', 20)}<span>${name ? 'Call ' + esc(name) : 'Call the client'}, ${esc(String(c.phone).trim())}</span></a>` : '';
+  const em = hasMail ? `<a class="btn btn-secondary" href="mailto:${esc(mail)}">${ic('mail', 20)}Email</a>` : '';
+  if (!call && !em) return name ? `<p class="small muted">Contact ${esc(name)}</p>` : '';
+  return `<div class="btn-row" style="margin:12px 0 0">${call}${em}</div>`;
+}
 function viewDue() {
   const due = dueAssets(), by = {};
   due.forEach(d => { (by[d.a.clientId] = by[d.a.clientId] || []).push(d); });
@@ -448,7 +463,8 @@ function viewDue() {
     const c = client(cid), L = by[cid], over = L.filter(d => d.days < 0).length, ov = openVisitFor(cid);
     return `<div class="card">
       <h3 class="d" style="font-size:22px">${esc(c.name)}</h3>
-      <p class="sub">${[over ? over + ' overdue' : '', (L.length - over) ? (L.length - over) + ' due within 30 days' : ''].filter(Boolean).join(', ')}${c.contact ? '. Contact ' + esc(c.contact) : ''}</p>
+      <p class="sub">${[over ? over + ' overdue' : '', (L.length - over) ? (L.length - over) + ' due within 30 days' : ''].filter(Boolean).join(', ')}</p>
+      ${contactActions(c)}
       <div class="rows" style="margin:12px 0">${L.map(d => `<div class="row" role="button" tabindex="0" data-act="open-asset" data-id="${d.a.id}"><span class="glyph">${glyph(d.a.type)}</span><span class="grow"><span class="row-id" style="display:block">${esc(d.a.ident)}</span><span class="row-sub" style="display:block">${esc(itemSub(d.a))}</span></span>${dueBadge(d.days)}</div>`).join('')}</div>
       ${ov ? `<button class="btn btn-secondary btn-block" data-act="open-visit" data-id="${ov.id}">Continue the visit in progress</button>`
            : `<button class="btn btn-primary btn-block" data-act="start-due" data-id="${cid}">Start a visit with this client's gear</button>`}
@@ -513,7 +529,8 @@ function sheetNewVisit() {
         <label class="field"><span>Client</span><input class="input" name="name" value="${esc(nv.name)}" autocomplete="off" required></label>
         <label class="field"><span>Site</span><input class="input" name="site" value="${esc(nv.site)}" autocomplete="off" placeholder="Workshop, 12 Example Rd, Welshpool"></label>
         <div class="cols"><label class="field"><span>Contact name</span><input class="input" name="contact" value="${esc(nv.contact)}" autocomplete="off"></label>
-        <label class="field"><span>Contact email</span><input class="input" name="email" type="email" value="${esc(nv.email)}" autocomplete="off"></label></div>`}
+        <label class="field"><span>Contact phone</span><input class="input" name="phone" type="tel" inputmode="tel" value="${esc(nv.phone)}" autocomplete="off"></label></div>
+        <label class="field"><span>Contact email</span><input class="input" name="email" type="email" value="${esc(nv.email)}" autocomplete="off"></label>`}
       <label class="field" style="margin-top:6px"><span>Inspection date</span><input class="input" type="date" name="date" value="${esc(nv.date)}" required></label>
       <p class="small muted" style="display:flex;align-items:center;gap:10px;margin-top:-4px">Tag colour ${tagChip(tagFor(nv.date))} You can change it on the visit.</p>
       ${nv.mode === 'existing' && assetsN ? `<label class="check"><input type="checkbox" name="bring" ${nv.bring ? 'checked' : ''}><span>Bring forward the ${plural(assetsN, 'item')} already on this client's register, ready to re-inspect</span></label>` : ''}

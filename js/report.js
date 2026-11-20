@@ -73,7 +73,7 @@ function reportDoc(v, photoMap) {
     <dl class="doc-meta">
       <div><dt>Client</dt><dd>${esc(c.name)}</dd></div>
       <div><dt>Site</dt><dd>${esc(c.site || 'Not recorded')}</dd></div>
-      <div><dt>Site contact</dt><dd>${esc(c.contact || 'Not recorded')}</dd></div>
+      <div><dt>Site contact</dt><dd>${esc([c.contact, c.phone].filter(Boolean).join(', ') || 'Not recorded')}</dd></div>
       <div><dt>Inspection date</dt><dd>${fmtDate(v.date)}</dd></div>
       <div><dt>Inspector</dt><dd>${esc(v.inspector)}</dd></div>
       <div><dt>Tag applied to passed items</dt><dd><span class="doc-tag"><i style="background:${tag.hex}"></i>${tag.name}, ${quarterOf(v.date)}</span></dd></div>
@@ -185,8 +185,8 @@ async function buildDemo() {
   S.settings.inspector = keepIn || { name: 'Sam Taylor', quals: 'Lifting equipment inspector' };
   const who = S.settings.inspector.name, today = todayISO();
 
-  const c1 = { id: 'c' + uid(), name: 'Brightwater Fabrication', site: 'Main workshop, Kewdale', contact: 'Dana Whitlock', email: '', phone: '' };
-  const c2 = { id: 'c' + uid() + 'b', name: 'Tallow Street Crane Hire', site: 'Yard and service truck, Bibra Lake', contact: 'Marco Petrovic', email: '', phone: '' };
+  const c1 = { id: 'c' + uid(), name: 'Brightwater Fabrication', site: 'Main workshop, Kewdale', contact: 'Dana Whitlock', email: '', phone: '0491 570 156' };
+  const c2 = { id: 'c' + uid() + 'b', name: 'Tallow Street Crane Hire', site: 'Yard and service truck, Bibra Lake', contact: 'Marco Petrovic', email: '', phone: '(08) 5550 1234' };
   S.clients.push(c1, c2);
   const mk = (cid, type, ident, wll, desc, make, location) => { const a = newAsset(cid, type); Object.assign(a, { ident, wll, desc, make, location }); return a; };
   const rec = (v, a, result, extra = {}) => { const i = newInsp(v.id, a.id); if (result) setResult(i, result); Object.assign(i, extra); return i; };
