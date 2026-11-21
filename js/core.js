@@ -1,54 +1,63 @@
 'use strict';
 /* Proofload core: constants, storage, state, helpers. No network calls anywhere in this app. */
 
-const APP = { name: 'Proofload', version: '0.2.0' };
+const APP = { name: 'Proofload', version: '0.3.0' };
 
 const TAGS = {
   red:    { name: 'Red',    hex: '#D7332A', on: '#FFFFFF' },
-  green:  { name: 'Green',  hex: '#1F9D55', on: '#FFFFFF' },
+  green:  { name: 'Green',  hex: '#1F9D55', on: '#17212B' },
   blue:   { name: 'Blue',   hex: '#1D6AE5', on: '#FFFFFF' },
   yellow: { name: 'Yellow', hex: '#F4B800', on: '#17212B' },
-  orange: { name: 'Orange', hex: '#EC6A12', on: '#FFFFFF' },
+  orange: { name: 'Orange', hex: '#EC6A12', on: '#17212B' },
   purple: { name: 'Purple', hex: '#7B46C9', on: '#FFFFFF' },
   white:  { name: 'White',  hex: '#FFFFFF', on: '#17212B' }
 };
-const QUARTERS = ['Jan to Mar', 'Apr to Jun', 'Jul to Sep', 'Oct to Dec'];
+const PERIODS = { 0: ['Jan to Mar', 'Apr to Jun', 'Jul to Sep', 'Oct to Dec'], 11: ['Dec to Feb', 'Mar to May', 'Jun to Aug', 'Sep to Nov'] };
+/* lower-case plural per type, for helper text */
+const TYPE_PLURALS = { chain: 'chain slings', wire: 'wire rope slings', web: 'flat webbing slings', round: 'round slings', shackle: 'shackles', hoist: 'chain blocks and lever hoists', clamp: 'beam clamps and trolleys', eyebolt: 'eyebolts and lifting points', beam: 'spreader and lifting beams', hook: 'hooks and master links', harness: 'safety harnesses', lanyard: 'lanyards and inertia reels', other: 'other lifting gear' };
+/* intervals before A19, kept for installs that already hold records */
+const OLD_MONTHS = { chain: 12, wire: 12, web: 3, round: 3, shackle: 12, hoist: 12, clamp: 12, eyebolt: 12, beam: 12, hook: 12, harness: 6, lanyard: 6, other: 12 };
 
 /* Standard references and intervals are starting defaults only.
    They are editable in Settings and must be confirmed against the current
    standard and the site procedure by a competent person. */
 const TYPES = [
-  { id: 'chain', name: 'Chain sling', std: 'AS 3775.2', months: 12, wll: true, hint: '2-leg, 10 mm, 3 m',
-    defects: ['Stretched or elongated links', 'Bent or twisted links', 'Nicks or gouges', 'Wear beyond limit', 'Corrosion', 'Heat damage', 'Hook throat opened', 'Safety latch missing or damaged', 'Tag missing or illegible'] },
-  { id: 'wire', name: 'Wire rope sling', std: 'AS 1666.2', months: 12, wll: true, hint: '16 mm, 4 m, soft eyes',
-    defects: ['Broken wires', 'Kinks', 'Birdcaging', 'Crushing or flattening', 'Corrosion', 'Ferrule damage', 'Thimble damage', 'Tag missing or illegible'] },
+  { id: 'chain', name: 'Chain sling', std: 'AS 3775.2', months: 3, wll: true, hint: '2-leg, 10 mm, Grade T(80), 3 m',
+    defects: ['Stretched or elongated links', 'Bent or twisted links', 'Nicks or gouges', 'Wear beyond limit', 'Corrosion or pitting', 'Heat damage', 'Coupling seized or damaged', 'Hook throat opened', 'Safety latch missing or damaged', 'Tag or marking missing or illegible'] },
+  { id: 'wire', name: 'Wire rope sling', std: 'AS 1666.2', months: 3, wll: true, hint: '16 mm, 4 m, soft eyes',
+    defects: ['Broken wires', 'Kinks', 'Birdcaging', 'Crushing or flattening', 'Wear or abrasion', 'Corrosion', 'Heat damage', 'Ferrule damage', 'Thimble damage', 'Tag or marking missing or illegible'] },
   { id: 'web', name: 'Flat webbing sling', std: 'AS 1353.2', months: 3, wll: true, hint: '50 mm, 2 m',
-    defects: ['Cuts or tears', 'Abrasion', 'Chemical damage', 'Heat or friction damage', 'Stitching damaged', 'UV degradation', 'Label missing or illegible'] },
+    defects: ['Cuts or tears', 'Abrasion', 'Chemical damage', 'Heat or friction damage', 'Stitching damaged', 'UV degradation', 'Knots', 'Paint or marker contamination', 'Tag or marking missing or illegible'] },
   { id: 'round', name: 'Round sling', std: 'AS 4497', months: 3, wll: true, hint: 'Endless, 2 m',
-    defects: ['Cover cut, core exposed', 'Abrasion', 'Chemical damage', 'Heat damage', 'Knots', 'Label missing or illegible'] },
-  { id: 'shackle', name: 'Shackle', std: 'AS 2741', months: 12, wll: true, hint: 'Bow, 19 mm pin',
-    defects: ['Pin bent', 'Thread damage', 'Wrong pin fitted', 'Wear in crown or pin', 'Deformation', 'Cracks', 'Markings illegible'] },
-  { id: 'hoist', name: 'Chain block or lever hoist', std: 'AS 1418.2', months: 12, wll: true, hint: 'Chain block, 3 m lift',
-    defects: ['Load chain wear', 'Hook deformation', 'Safety latch missing', 'Brake slipping', 'Casing damage', 'Chain not running freely', 'No data plate'] },
-  { id: 'clamp', name: 'Beam clamp or trolley', std: 'AS 4991', months: 12, wll: true, hint: '75 to 230 mm flange',
-    defects: ['Jaw wear', 'Screw thread damage', 'Deformation', 'Cracks', 'Markings illegible'] },
-  { id: 'eyebolt', name: 'Eyebolt or lifting point', std: 'AS 2317', months: 12, wll: true, hint: 'M20 collared',
-    defects: ['Thread damage', 'Bent shank', 'Eye deformation', 'Corrosion', 'Markings illegible'] },
-  { id: 'beam', name: 'Spreader or lifting beam', std: 'AS 4991', months: 12, wll: true, hint: '3 m, 2 lugs',
-    defects: ['Weld cracks', 'Deformation', 'Lug wear', 'Corrosion', 'Data plate missing'] },
-  { id: 'hook', name: 'Hook or master link', std: 'AS 3776', months: 12, wll: true, hint: 'Sling hook with latch',
-    defects: ['Throat opening increased', 'Twist', 'Wear', 'Cracks', 'Safety latch missing or damaged'] },
+    defects: ['Cover cut, core exposed', 'Unexplained lump under the cover', 'Abrasion', 'Chemical damage', 'Heat damage', 'Knots', 'Tag or marking missing or illegible'] },
+  { id: 'shackle', name: 'Shackle', std: 'AS 2741', months: 3, wll: true, hint: 'Bow, 19 mm pin',
+    defects: ['Pin bent', 'Pin not fully seated', 'Thread damage', 'Wrong pin fitted', 'Wear in crown or pin', 'Deformation', 'Cracks', 'Tag or marking missing or illegible'] },
+  { id: 'hoist', name: 'Chain block or lever hoist', std: 'AS 1418.2', months: 3, wll: true, cap: true, hint: 'Chain block, 3 m lift',
+    defects: ['Load chain wear', 'Hook deformation', 'Safety latch missing', 'Brake slipping', 'Casing damage', 'Chain not running freely', 'Data plate missing or illegible'] },
+  { id: 'clamp', name: 'Beam clamp or trolley', std: 'AS 4991', months: 3, wll: true, hint: '75 to 230 mm flange',
+    defects: ['Jaw wear', 'Screw thread damage', 'Deformation', 'Cracks', 'Tag or marking missing or illegible'] },
+  { id: 'eyebolt', name: 'Eyebolt or lifting point', std: 'AS 2317', months: 3, wll: true, hint: 'M20 collared',
+    defects: ['Thread damage', 'Bent shank', 'Eye deformation', 'Corrosion', 'Tag or marking missing or illegible'] },
+  { id: 'beam', name: 'Spreader or lifting beam', std: 'AS 4991', months: 3, wll: true, hint: '3 m, 2 lugs',
+    defects: ['Weld cracks', 'Deformation', 'Lug wear', 'Corrosion', 'Data plate missing or illegible'] },
+  { id: 'hook', name: 'Hook or master link', std: 'AS 3776', months: 3, wll: true, hint: 'Sling hook with latch',
+    defects: ['Throat opening increased', 'Twist', 'Wear', 'Cracks', 'Safety latch missing or damaged', 'Tag or marking missing or illegible'] },
   { id: 'harness', name: 'Safety harness', std: 'AS/NZS 1891.4', months: 6, wll: false, hint: 'Full body, size M-L',
-    defects: ['Webbing cuts or fraying', 'Stitching damaged', 'Buckle or D-ring damage', 'Fall indicator deployed', 'Chemical or UV damage', 'Label missing or illegible'] },
+    defects: ['Webbing cuts or fraying', 'Stitching damaged', 'Buckle or D-ring damage', 'Fall indicator deployed', 'Chemical or UV damage', 'Tag or marking missing or illegible'] },
   { id: 'lanyard', name: 'Lanyard or inertia reel', std: 'AS/NZS 1891.4', months: 6, wll: false, hint: 'Twin-tail, 2 m',
-    defects: ['Webbing or rope damage', 'Shock absorber deployed', 'Hook gate faulty', 'Housing damage', 'Does not lock or retract', 'Label missing or illegible'] },
-  { id: 'other', name: 'Other lifting gear', std: '', months: 12, wll: true, hint: 'Describe the item',
-    defects: ['Deformation', 'Wear', 'Corrosion', 'Cracks', 'Markings illegible'] }
+    defects: ['Webbing or rope damage', 'Shock absorber deployed', 'Hook gate faulty', 'Housing damage', 'Does not lock or retract', 'Tag or marking missing or illegible'] },
+  { id: 'other', name: 'Other lifting gear', std: '', months: 3, wll: true, hint: 'Describe the item',
+    defects: ['Deformation', 'Wear', 'Corrosion', 'Cracks', 'Tag or marking missing or illegible'] }
 ];
+
+/* What was done with failed or repair gear, by result. */
+const ACTIONS = { fail: ['Danger tag fitted', 'Destroyed on site', 'Quarantined on site', 'Returned to the client'], repair: ['Danger tag fitted', 'Quarantined on site', 'Sent for repair', 'Returned to the client'] };
+/* "Danger tag fitted, quarantined on site." */
+const actionText = l => (l && l.length) ? l.map((x, k) => k ? x.charAt(0).toLowerCase() + x.slice(1) : x).join(', ') + '.' : '';
 
 const RESULTS = {
   pass:    { label: 'Pass',          long: 'Fit for service' },
-  fail:    { label: 'Fail',          long: 'Remove from service' },
+  fail:    { label: 'Fail',          long: 'Withdraw from service' },
   repair:  { label: 'Repair',        long: 'Repair, then re-inspect' },
   missing: { label: 'Not presented', long: 'Not sighted this visit' }
 };
@@ -116,7 +125,7 @@ function blankState() {
       quarters: ['red', 'green', 'blue', 'yellow'],
       types: {},
       prefix: 'LR', nextNo: 1,
-      photoEveryItem: false,
+      photoEveryItem: false, tagStart: 0, lastBackupAt: '', intervalsV2: true,
       disclaimer: DEFAULT_DISCLAIMER,
       onboarded: false
     },
@@ -144,8 +153,18 @@ const typeOf = a => {
 };
 const typeById = id => typeOf({ type: id });
 const itemLabel = a => typeOf(a).name + ' ' + (a.ident.trim() || 'with no ID');
-const tagFor = iso => S.settings.quarters[Math.floor(parseISO(iso).getMonth() / 3)] || 'yellow';
-const quarterOf = iso => QUARTERS[Math.floor(parseISO(iso).getMonth() / 3)];
+const tagStartOf = () => S.settings.tagStart === 11 ? 11 : 0;
+const periodIdx = iso => Math.floor(((parseISO(iso).getMonth() - tagStartOf() + 12) % 12) / 3);
+const tagFor = iso => S.settings.quarters[periodIdx(iso)] || 'yellow';
+const periodOf = iso => PERIODS[tagStartOf()][periodIdx(iso)];
+const quarterOf = periodOf;
+/* change a visit date: a tag still on the default for the old date follows the new date; due dates follow too */
+function setVisitDate(v, iso) {
+  const wasDefault = v.tag === tagFor(v.date);
+  v.date = iso;
+  if (wasDefault) v.tag = tagFor(iso);
+  visitInsps(v.id).forEach(i => { if (i.result === 'pass') i.nextDue = addMonths(v.date, typeOf(asset(i.assetId)).months); else if (i.result === 'missing') i.nextDue = priorDue(i); });
+}
 
 function counts(vid) {
   const c = { total: 0, pass: 0, fail: 0, repair: 0, missing: 0, todo: 0 };
@@ -164,6 +183,27 @@ function lastInsp(aid) {
   });
   return best;
 }
+/* The due date an asset carried into this visit, from the latest earlier visit that gave it one (pass or not presented). */
+function priorDue(i) {
+  const v = visit(i.visitId); if (!v) return '';
+  let best = null;
+  S.inspections.forEach(o => {
+    if (o.assetId !== i.assetId || o.visitId === i.visitId || !o.nextDue || (o.result !== 'pass' && o.result !== 'missing')) return;
+    const ov = visit(o.visitId); if (!ov || !(ov.date < v.date)) return;
+    if (!best || ov.date >= best.v.date) best = { o, v: ov };
+  });
+  return best ? best.o.nextDue : '';
+}
+/* The date of the latest earlier pass of this asset, on a strictly earlier visit. */
+function lastPassedBefore(i) {
+  const v = visit(i.visitId); if (!v) return '';
+  let best = '';
+  S.inspections.forEach(o => {
+    if (o.assetId !== i.assetId || o.visitId === i.visitId || o.result !== 'pass') return;
+    const ov = visit(o.visitId); if (ov && ov.date < v.date && ov.date > best) best = ov.date;
+  });
+  return best;
+}
 function dueAssets(within = 30) {
   return S.assets.filter(a => !a.retired).map(a => {
     const l = lastInsp(a.id);
@@ -171,6 +211,14 @@ function dueAssets(within = 30) {
     return { a, l, days: daysFromToday(l.i.nextDue) };
   }).filter(x => x && x.days <= within).sort((x, y) => x.days - y.days);
 }
+/* Gear whose latest result is Repair and that is still on the active register. */
+function repairAssets() {
+  return S.assets.filter(a => !a.retired).map(a => { const l = lastInsp(a.id); return l && l.i.result === 'repair' ? { a, l } : null; }).filter(Boolean).sort((x, y) => x.l.v.date.localeCompare(y.l.v.date));
+}
+/* WLL text: a comma becomes a full stop; a working load limit is a plain number. */
+const normWll = s => String(s == null ? '' : s).replace(/,/g, '.').trim();
+const wllIsNumber = s => /^\d+(\.\d+)?$/.test(String(s).trim());
+const wllName = t => t.cap ? 'rated capacity' : 'working load limit';
 const openVisitFor = cid => S.visits.find(v => v.clientId === cid && v.status === 'open');
 
 /* The readiness gate. A report cannot be issued while any 'block' entry exists. */
@@ -185,20 +233,23 @@ function gate(v) {
     const a = asset(i.assetId), t = typeOf(a), label = itemLabel(a);
     if (!i.result) out.push({ kind: 'block', text: label + ' has no result', fix: 'add a result', item: i.id });
     if (!a.ident.trim()) out.push({ kind: 'block', text: t.name + ' has no ID or serial number', fix: 'add an ID', item: i.id });
-    if (t.wll && !String(a.wll).trim() && i.result && i.result !== 'missing') out.push({ kind: 'block', text: label + ' has no working load limit', fix: 'add the working load limit', item: i.id });
+    if (t.wll && !String(a.wll).trim() && i.result && i.result !== 'missing') out.push({ kind: 'block', text: label + ' has no ' + wllName(t), fix: 'add the ' + wllName(t), item: i.id });
+    if (t.wll && String(a.wll).trim() && !wllIsNumber(a.wll) && i.result && i.result !== 'missing') out.push({ kind: 'block', text: label + ' has a ' + wllName(t) + ' that is not a number', fix: 'enter the ' + wllName(t) + ' as a number', item: i.id });
     if (i.result === 'fail' || i.result === 'repair') {
       if (!i.defects.length && !i.notes.trim()) out.push({ kind: 'block', text: label + ' needs a defect or a note explaining the result', fix: 'add a defect or a note', item: i.id });
       if (!i.photos.length) out.push({ kind: 'block', text: label + ' needs a photo of the defect', fix: 'add a photo of the defect', item: i.id });
+      if (!(i.actions || []).length) out.push({ kind: 'block', text: label + ' needs what was done with it', fix: 'say what was done with it', item: i.id });
     }
     if (S.settings.photoEveryItem && i.result === 'pass' && !i.photos.length) out.push({ kind: 'block', text: label + ' needs a photo', fix: 'add a photo', item: i.id });
     /* a voice draft is only a draft until the inspector has checked it */
     const open = (i.voice || []).filter(n => n.status !== 'checked'), typing = open.filter(n => n.status === 'queued' || n.status === 'transcribing').length;
     const packReady = typeof Voice !== 'undefined' && Voice.state === 'ready';
     if (typing && !packReady) out.push({ kind: 'block', text: label + (typing === 1 ? ' has a voice note waiting for a draft' : ` has ${typing} voice notes waiting for a draft`) + '. Download voice notes in Settings, or type it yourself', fix: typing === 1 ? 'download voice notes in Settings or type the note yourself' : 'download voice notes in Settings or type the notes yourself', item: i.id });
-    else if (typing) out.push({ kind: 'block', text: label + (typing === 1 ? ' has a voice note still being typed' : ` has ${typing} voice notes still being typed`), fix: typing === 1 ? 'wait for the voice note to finish typing' : `wait for ${typing} voice notes to finish typing`, item: i.id });
+    else if (typing) out.push({ kind: 'block', text: label + (typing === 1 ? ' has a voice note still being written' : ` has ${typing} voice notes still being written`), fix: typing === 1 ? 'wait for the voice note to be written' : `wait for ${typing} voice notes to be written`, item: i.id });
     else if (open.length) out.push({ kind: 'block', text: label + (open.length === 1 ? ' has a voice note to check' : ` has ${open.length} voice notes to check`), fix: open.length === 1 ? 'check the voice note' : `check ${open.length} voice notes`, item: i.id });
   });
-  if (!String(v.inspector || '').trim()) out.push({ kind: 'block', text: 'Inspector name is missing', focus: 'inspector' });
+  if (!String(v.inspector || '').trim()) out.push({ kind: 'block', text: 'Inspector name is missing', focus: 'inspectorInput' });
+  if (!String(v.inspectorQuals || '').trim()) out.push({ kind: 'advise', text: "Add the inspector's competency so the report shows it", focus: 'qualsInput' });
   if (!v.signInspector) out.push({ kind: 'block', text: 'Inspector signature is missing', sign: 'inspector' });
   if (!v.signClient) out.push({ kind: 'advise', text: 'No client signature yet. You can still issue the report.', sign: 'client' });
   return out;
@@ -224,6 +275,34 @@ function groupGate(list) {
   return out;
 }
 const gateLines = v => groupGate(gate(v));
+
+/* Which route should actually be shown: an issued visit opens its report; an open visit's report (not a preview or earlier version) goes back to the visit. */
+function routeFor(r) {
+  const v = (r.name === 'visit' || r.name === 'report') ? visit(r.id) : null;
+  if (!v) return r;
+  if (r.name === 'visit' && v.status === 'issued') return { name: 'report', id: r.id };
+  if (r.name === 'report' && v.status !== 'issued' && !r.preview && r.rev === undefined) return { name: 'visit', id: r.id, panel: '' };
+  return r;
+}
+
+/* Backup reminder (A21). '' when none is needed, else the text for "Last backup: ...": 'never', '1 day ago' or 'n days ago'.
+   Needed when a report has been issued and the data is not backed up: never backed up, or the last backup is 7+ days old and a report
+   was issued on or after that day (issuedAt has no time, so the comparison is by local date; a false reminder beats a missed one). */
+function backupReminder(now = new Date()) {
+  if (!S.visits.some(v => v.status === 'issued' || v.issuedAt)) return '';
+  const raw = S.settings.lastBackupAt, last = raw ? new Date(raw) : null;
+  if (!last || isNaN(last)) return 'never';
+  if (now - last < 7 * 864e5) return '';
+  const day = toISO(last);
+  if (!S.visits.some(v => v.issuedAt && v.issuedAt >= day)) return '';
+  const n = Math.floor((now - last) / 864e5);
+  return n === 1 ? '1 day ago' : n + ' days ago';
+}
+/* Returns a function that puts an inspection's result fields back as they are now (used by Undo after a one-tap pass). */
+function resultUndo(i) {
+  const s = { result: i.result, nextDue: i.nextDue, defects: [...i.defects], actions: [...(i.actions || [])], retest: !!i.retest };
+  return () => { const v = visit(i.visitId); if (!insp(i.id) || !v || v.status !== 'open') return false; Object.assign(i, s, { defects: [...s.defects], actions: [...s.actions] }); return true; };
+}
 
 /* Phone as typed is stored; only the tel: link is normalised. */
 function telHref(p) {
@@ -264,32 +343,101 @@ function voicePrompt() {
 /* ---------- record creation ---------- */
 function newAsset(clientId, typeId, like) {
   const t = typeById(typeId);
-  const a = { id: 'a' + uid(), clientId, type: typeId, ident: '', wll: '', wllUnit: 't', make: '', desc: '', location: '', std: t.std, retired: false, createdAt: todayISO() };
+  const a = { id: 'a' + uid(), clientId, type: typeId, ident: '', wll: '', wllUnit: 't', make: '', certNo: '', desc: '', location: '', std: t.std, retired: false, createdAt: todayISO() };
   if (like) Object.assign(a, { wll: like.wll, wllUnit: like.wllUnit, make: like.make, desc: like.desc, location: like.location, std: like.std });
   S.assets.push(a); return a;
 }
 function newInsp(visitId, assetId) {
-  const i = { id: 'i' + uid(), visitId, assetId, result: '', defects: [], notes: '', photos: [], voice: [], nextDue: '' };
+  const i = { id: 'i' + uid(), visitId, assetId, result: '', defects: [], notes: '', photos: [], voice: [], nextDue: '', actions: [], retest: false };
   S.inspections.push(i); return i;
 }
 function newVisit(clientId, date, tag, bringForward) {
   const v = { id: 'v' + uid(), clientId, date, tag, status: 'open', reportNo: '', issuedAt: '', rev: 0,
-    inspector: S.settings.inspector.name, scope: '', signInspector: '', signClient: '', clientRep: '' };
+    inspector: S.settings.inspector.name, scope: '', signInspector: '', signClient: '', clientRep: '',
+    inspectorQuals: S.settings.inspector.quals, revisions: [], revReason: '', snapshot: null };
   S.visits.unshift(v);
   if (bringForward) S.assets.filter(a => a.clientId === clientId && !a.retired).forEach(a => newInsp(v.id, a.id));
   return v;
 }
 function setResult(i, result) {
-  const v = visit(i.visitId), a = asset(i.assetId);
+  const v = visit(i.visitId), a = asset(i.assetId), was = i.result;
   i.result = result;
-  i.nextDue = result === 'pass' ? addMonths(v.date, typeOf(a).months) : '';
+  i.nextDue = result === 'pass' ? addMonths(v.date, typeOf(a).months) : result === 'missing' ? priorDue(i) : '';
   if (result === 'pass' || result === 'missing') i.defects = [];
+  /* what was done with it: cleared for pass or not presented; between fail and repair only the actions valid for both stay */
+  i.actions = ACTIONS[result] ? (i.actions || []).filter(x => ACTIONS[result].includes(x)) : [];
+  /* a proof load test after repair is suggested for load-bearing gear the first time it is marked repair */
+  i.retest = result === 'repair' ? (was === 'repair' ? !!i.retest : ['chain', 'hoist', 'beam'].includes(a.type)) : false;
 }
 async function removeInsp(id) {
   const i = insp(id); if (!i) return;
-  for (const p of i.photos) { PH.delete(p); await DB.del('photos', p); }
+  for (const p of i.photos) if (!photoInSnapshots(p)) { PH.delete(p); await DB.del('photos', p); }
   for (const n of (i.voice || [])) await DB.del('audio', n.audioId);
   S.inspections = S.inspections.filter(x => x.id !== id);
   /* drop the asset too if this was its only inspection */
   if (!S.inspections.some(x => x.assetId === i.assetId)) S.assets = S.assets.filter(a => a.id !== i.assetId);
+}
+
+/* ---------- frozen reports: photos, numbering ---------- */
+/* Every photo id a visit's frozen reports (current snapshot and earlier versions) still show. */
+function snapshotPhotoIds(v) {
+  const out = [], take = sn => { if (sn && sn.items) sn.items.forEach(x => (x.photos || []).forEach(p => out.push(p))); };
+  take(v.snapshot); (v.revisions || []).forEach(r => take(r.snapshot));
+  return out;
+}
+const photoInSnapshots = id => S.visits.some(v => snapshotPhotoIds(v).includes(id));
+
+const reportNoPrefix = () => S.settings.prefix || 'LR';
+const fmtReportNo = (prefix, n) => prefix + '-' + String(n).padStart(4, '0');
+/* Every report number already used, by a visit or by one of its earlier versions. */
+function usedReportNos() {
+  const used = new Set();
+  S.visits.forEach(v => { if (v.reportNo) used.add(v.reportNo); (v.revisions || []).forEach(r => { if (r.reportNo) used.add(r.reportNo); }); });
+  return used;
+}
+/* The next free report number. Skips any number in use and leaves nextNo at the used number + 1. */
+function allocReportNo() {
+  const prefix = reportNoPrefix(), used = usedReportNos();
+  let n = parseInt(S.settings.nextNo, 10) || 1;
+  while (used.has(fmtReportNo(prefix, n))) n++;
+  S.settings.nextNo = n + 1;
+  return fmtReportNo(prefix, n);
+}
+/* The warning under "Next number": '' unless a number with this prefix at or above n has been issued. */
+function nextNoWarning(prefix, n) {
+  prefix = prefix || 'LR'; n = parseInt(n, 10) || 1;
+  const pre = prefix + '-'; let max = 0;
+  usedReportNos().forEach(no => { if (no.startsWith(pre) && /^\d+$/.test(no.slice(pre.length))) max = Math.max(max, parseInt(no.slice(pre.length), 10)); });
+  return max && max >= n ? `${fmtReportNo(prefix, max)} has already been issued. The next free number is ${max + 1}.` : '';
+}
+
+/* ---------- migrate: every default for older records, in one place. Safe to run twice. ---------- */
+function migrate(rawSettings) {
+  const st = S.settings;
+  /* 1. simple defaults, only where the field is missing */
+  if (st.tagStart === undefined) st.tagStart = 0;
+  if (st.lastBackupAt === undefined) st.lastBackupAt = '';
+  S.assets.forEach(a => { if (a.certNo === undefined) a.certNo = ''; });
+  S.inspections.forEach(i => { if (!Array.isArray(i.actions)) i.actions = []; if (i.retest === undefined) i.retest = false; });
+  S.visits.forEach(v => {
+    if (!Array.isArray(v.revisions)) v.revisions = [];
+    if (v.revReason === undefined) v.revReason = '';
+    /* the old report printed the competency only when the visit's inspector was the Settings inspector */
+    if (v.inspectorQuals === undefined) v.inspectorQuals = (st.inspector && v.inspector === st.inspector.name) ? (st.inspector.quals || '') : '';
+  });
+  /* 2. freeze reports issued before snapshots existed, from the data as it stands now */
+  S.visits.forEach(v => {
+    if (v.status === 'issued' && !v.snapshot) { v.snapshot = makeSnapshot(v); v.snapshot.migrated = true; }
+    else if (v.snapshot === undefined) v.snapshot = null;
+  });
+  /* 3. gear not presented keeps the due date it already had (after the freeze, so frozen reports are untouched) */
+  S.inspections.forEach(i => { if (i.result === 'missing' && !i.nextDue) i.nextDue = priorDue(i); });
+  /* 4. A19: existing installs keep the intervals they had; new installs and sample data get the new defaults */
+  if (rawSettings && rawSettings.intervalsV2 !== true && (S.assets.length || S.visits.length)) {
+    Object.keys(OLD_MONTHS).forEach(id => {
+      const o = st.types[id];
+      if (!o || o.months === undefined) st.types[id] = { ...(o || {}), months: OLD_MONTHS[id] };
+    });
+  }
+  st.intervalsV2 = true;
 }

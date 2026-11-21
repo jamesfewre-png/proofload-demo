@@ -5,7 +5,7 @@
 function render() {
   Voice.stopPlay();
   let r = UI.route;
-  if (r.name === 'visit') { const v = visit(r.id); if (v && v.status === 'issued') r = UI.route = { name: 'report', id: r.id }; }
+  const r2 = routeFor(r); if (r2 !== r) r = UI.route = r2;
   /* a recording in progress is saved, not lost, if the screen moves away from its item */
   if (Voice.rec && !(r.name === 'visit' && r.panel === 'item' && r.itemId === Voice.rec.inspId)) Voice.stopRec();
   if (UI.voiceErr && !(r.name === 'visit' && r.itemId === UI.voiceErr.inspId)) UI.voiceErr = null;
@@ -25,7 +25,7 @@ function renderList() {
 function refreshGate() {
   const box = $('#gateBox'), v = curVisit(); if (!box || !v) return;
   box.innerHTML = gateBox(v);
-  const btn = $('#issueBtn'); if (btn) btn.disabled = gate(v).some(x => x.kind === 'block');
+  const btn = $('#issueBtn'); if (btn) { btn.disabled = gate(v).some(x => x.kind === 'block'); btn.innerHTML = issueLabelHTML(v); }
 }
 function hydrate(root = document) {
   $$('img[data-photo]', root).forEach(async img => {
@@ -69,11 +69,17 @@ function openOverlay(html, quiet) {
 }
 function closeOverlay() { $('#overlay').innerHTML = ''; confirmFn = null; }
 function ask(title, body, okLabel, fn, danger) { openOverlay(sheetConfirm(title, body, okLabel, danger)); confirmFn = fn; }
-let toastTimer = null;
-function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+let toastTimer = null, toastUndo = null;
+/* With undoFn the toast also holds an Undo button and stays 5 s; a new toast replaces the old one and its pending Undo. */
+function toast(msg, undoFn) {
+  const t = $('#toast'); clearTimeout(toastTimer); toastUndo = undoFn || null;
+  t.classList.toggle('has-undo', !!undoFn);
+  const shown = esc(msg).replace(/\S*-\S*/g, m => `<span class="nw">${m}</span>`);  /* an ID like TS-SB-01 never breaks at its hyphens; the text itself is unchanged */
+  if (undoFn) t.innerHTML = `<span>${shown}</span><button class="undo" data-act="toast-undo">Undo</button>`; else t.innerHTML = shown;
+  t.classList.add('show');
+  toastTimer = setTimeout(hideToast, undoFn ? 5000 : 2600);
 }
+function hideToast() { clearTimeout(toastTimer); toastUndo = null; $('#toast').classList.remove('show'); }
 
 /* ---------- photos ---------- */
 let photoTarget = null, fileMode = null;
@@ -146,15 +152,27 @@ const ACT = {
     UI.filter = 'all'; save(); setPanel('item', i.id); focusIdent();
   },
   'open-item'(el) { setPanel('item', el.dataset.id); },
-  'quick-pass'(el) { const i = insp(el.dataset.id); if (!i) return; setResult(i, 'pass'); save(); render(); },
+  'quick-pass'(el) {
+    const i = insp(el.dataset.id); if (!i) return;
+    const a = asset(i.assetId), undo = resultUndo(i);
+    setResult(i, 'pass'); save(); render();
+    toast('Passed ' + (a.ident.trim() || typeOf(a).name) + '.', () => { if (undo()) { save(); render(); } });
+  },
+  'toast-undo'() { const fn = toastUndo; hideToast(); if (fn) fn(); },
   'set-result'(el) {
     const i = curInsp(), k = el.dataset.result; if (!i) return;
-    if (i.result === k) { i.result = ''; i.nextDue = ''; } else setResult(i, k);
+    if (i.result === k) { i.result = ''; i.nextDue = ''; i.actions = []; i.retest = false; } else setResult(i, k);
     save(); render();
   },
   'toggle-defect'(el) {
     const i = curInsp(), d = el.dataset.defect; if (!i) return;
     i.defects = i.defects.includes(d) ? i.defects.filter(x => x !== d) : [...i.defects, d];
+    save(); render();
+  },
+  'toggle-action'(el) {
+    const i = curInsp(), x = el.dataset.action; if (!i) return;
+    const cur = i.actions || [];
+    i.actions = cur.includes(x) ? cur.filter(y => y !== x) : [...cur, x];
     save(); render();
   },
   'toggle-types'() { UI.typeOpen = !UI.typeOpen; render(); },
@@ -166,6 +184,7 @@ const ACT = {
     if (i.result === 'pass') i.nextDue = addMonths(visit(i.visitId).date, t.months);
     UI.typeOpen = false; save(); render();
   },
+  'set-tagstart'(el) { S.settings.tagStart = el.dataset.start === '11' ? 11 : 0; save(); render(); },
   'set-unit'(el) { const a = curAsset(); if (!a) return; a.wllUnit = el.dataset.unit; save(); render(); },
   'add-like'() {
     const i = curInsp(); if (!i) return;
@@ -184,7 +203,9 @@ const ACT = {
   'view-photo'(el) { openOverlay(sheetPhoto(el.dataset.photoId, true)); },
   async 'del-photo'(el) {
     const i = curInsp(), id = el.dataset.photoId; if (!i) return;
-    i.photos = i.photos.filter(p => p !== id); PH.delete(id); await DB.del('photos', id);
+    i.photos = i.photos.filter(p => p !== id);
+    /* an earlier version of a report may still show this photo: keep it in the store */
+    if (!photoInSnapshots(id)) { PH.delete(id); await DB.del('photos', id); }
     closeOverlay(); save(); render();
   },
 
@@ -218,7 +239,7 @@ const ACT = {
     else if (g.sign) ACT.sign({ dataset: { who: g.sign } });
     else if (g.nav) go({ name: g.nav });
     else if (g.panel) setPanel(g.panel);
-    else if (g.focus) { const f = $('#inspectorInput'); if (f) f.focus(); }
+    else if (g.focus) { const f = document.getElementById(g.focus); if (f) f.focus(); }
   },
   sign(el) { openOverlay(sheetSign(el.dataset.who)); initSigPad(); },
   'sig-clear'() { initSigPad(); },
@@ -230,23 +251,27 @@ const ACT = {
   },
   issue() {
     const v = curVisit(); if (!v || gate(v).some(x => x.kind === 'block')) return;
-    if (!v.reportNo) {
-      const n = parseInt(S.settings.nextNo, 10) || 1;
-      v.reportNo = (S.settings.prefix || 'LR') + '-' + String(n).padStart(4, '0');
-      S.settings.nextNo = n + 1;
-    } else v.rev = (v.rev || 0) + 1;
-    v.status = 'issued'; v.issuedAt = todayISO();
+    const gone = issueVisit(v);
     save(); UI.justIssued = true;
     go({ name: 'report', id: v.id }, { replace: true });
+    if (gone) toast(gone === 1 ? '1 destroyed item taken off the active register.' : gone + ' destroyed items taken off the active register.');
     setTimeout(() => { UI.justIssued = false; }, 3400);
   },
-  reopen() {
-    const v = curVisit();
-    ask('Reopen this report?', 'The visit becomes editable again. When you issue it again it keeps its number and is marked as a revision.', 'Reopen', () => {
-      v.status = 'open'; save(); go({ name: 'visit', id: v.id, panel: '' }, { replace: true });
-    });
+  revise() { const v = curVisit(); if (v) openOverlay(sheetRevise(v)); },
+  'revise-ok'() {
+    const v = curVisit(), f = $('#reviseWhy'); if (!v || !f || !reviseVisit(v, f.value)) return;
+    closeOverlay(); save(); go({ name: 'visit', id: v.id, panel: '' }, { replace: true });
   },
-  print() { window.print(); },
+  'open-rev'(el) { go({ name: 'report', id: UI.route.id, rev: +el.dataset.idx }); },
+  'back-report'() { history.back(); },
+  print() {
+    const m = reportModel(curVisit()), r = UI.route, rv = r.rev !== undefined && curVisit().revisions && curVisit().revisions[r.rev];
+    let st = document.getElementById('pageMarks');
+    if (!st) { st = document.createElement('style'); st.id = 'pageMarks'; document.head.appendChild(st); }
+    st.textContent = pageMarksCSS(rv ? rv.snapshot : m);
+    window.print();
+  },
+  preview() { const v = curVisit(); if (v) go({ name: 'report', id: v.id, preview: true }); },
   async 'dl-report'() { const v = curVisit(); download(reportFileName(v, 'html'), 'text/html', await standaloneReport(v)); toast('Report file saved. Open it anywhere, no app needed.'); },
   async 'share-report'() {
     const v = curVisit(), html = await standaloneReport(v);
@@ -256,7 +281,7 @@ const ACT = {
       else download(file.name, 'text/html', html);
     } catch (e) { /* share sheet dismissed */ }
   },
-  'dl-csv'() { const v = curVisit(); download(reportFileName(v, 'csv'), 'text/csv', registerCSV(v)); },
+  'dl-csv'() { const v = curVisit(); download(reportFileName(v, 'csv'), 'text/csv', registerCSV(v)); toast('Spreadsheet saved.'); },
 
   'open-asset'(el) { go({ name: 'register', assetId: el.dataset.id }, { replace: UI.route.name === 'register' && !!UI.route.assetId }); },
   'retire-asset'(el) { const a = asset(el.dataset.id); if (!a) return; a.retired = !a.retired; save(); render(); },
@@ -266,14 +291,21 @@ const ACT = {
     const v = curVisit();
     ask('Delete this visit?', 'Every result, photo and voice note recorded on this visit is deleted. Items that were only ever on this visit leave the register.', 'Delete visit', async () => {
       for (const i of visitInsps(v.id)) await removeInsp(i.id);
+      const held = snapshotPhotoIds(v);
       S.visits = S.visits.filter(x => x.id !== v.id);
+      /* photos kept only for this visit's earlier versions go with the visit */
+      for (const p of held) if (!photoInSnapshots(p) && !S.inspections.some(x => x.photos.includes(p))) { PH.delete(p); await DB.del('photos', p); }
       save(); go({ name: 'home' }, { replace: true });
     }, true);
   },
 
   'pick-logo'() { fileMode = 'logo'; const f = $('#fileInput'); f.accept = 'image/*'; f.click(); },
   'clear-logo'() { S.settings.company.logo = ''; save(); render(); },
-  async backup() { download('Proofload backup ' + todayISO() + '.json', 'application/json', await makeBackup()); toast('Backup saved. Keep it somewhere safe.'); },
+  async backup() {
+    download('Proofload backup ' + todayISO() + '.json', 'application/json', await makeBackup());
+    S.settings.lastBackupAt = new Date().toISOString(); save(); render();
+    toast('Backup saved. Keep it somewhere safe.');
+  },
   restore() { fileMode = 'restore'; const f = $('#fileInput'); f.accept = '.json,application/json'; f.click(); },
   'load-demo'() {
     const run = async () => { await buildDemo(); UI.filter = 'all'; go({ name: 'home' }, { replace: true }); toast('Sample data loaded.'); };
@@ -337,6 +369,7 @@ const setPath = (obj, path, val) => { const ks = path.split('.'); const last = k
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.dataset.voice) { voiceInput(el); return; }
+  if (el.id === 'reviseWhy') { const ok = $('#reviseOk'); if (ok) ok.disabled = !reasonOk(el.value); return; }
   if (el.id === 'regSearch') { UI.q = el.value; $('#regRows').innerHTML = regRows(UI.route); return; }
   if (el.name === 'date' && el.form && el.form.dataset.form === 'new-visit') { syncNv(); openOverlay(sheetNewVisit(), true); return; }
   if (el.dataset.typeStd) { const id = el.dataset.typeStd; S.settings.types[id] = { ...(S.settings.types[id] || {}), std: el.value }; save(); return; }
@@ -349,16 +382,21 @@ document.addEventListener('input', e => {
   let val = el.value;
   if (scope === 's' && path === 'nextNo') val = parseInt(val, 10) || 1;
   if (scope === 'v' && path === 'date' && !val) return;
-  setPath(obj, path, val); save();
+  if (scope === 'v' && path === 'date') setVisitDate(v, val); else setPath(obj, path, val);
+  save();
+  if (scope === 's' && (path === 'nextNo' || path === 'prefix')) { const w = $('#nextNoWarn'); if (w) w.innerHTML = nextNoWarnHTML(); }
   if (!v) return;
-  if (scope === 'v' && path === 'date') visitInsps(v.id).forEach(i => { if (i.result === 'pass') i.nextDue = addMonths(v.date, typeOf(asset(i.assetId)).months); });
   if (scope === 'a' && path === 'ident') { const t = $('#paneDetail .title'); if (t) t.textContent = val || 'New item'; const w = $('#identWarn'), ca = curAsset(), ci = curInsp(); if (w && ca && ci) w.innerHTML = identWarn(ca, ci.visitId); }
   if (isWide() || scope === 'c' || scope === 'v') renderList();
   if (scope === 'v') refreshGate();
+  /* only the swatches are redrawn, so focus stays in the date input */
+  if (scope === 'v' && path === 'date') { const sw = $('#swatches'); if (sw) sw.innerHTML = swatchesHTML(v); }
 });
 document.addEventListener('change', e => {
   const el = e.target;
   if (el.dataset.quarter !== undefined && el.tagName === 'SELECT') { S.settings.quarters[+el.dataset.quarter] = el.value; save(); render(); return; }
+  if (el.dataset.retest !== undefined) { const i = curInsp(); if (i) { i.retest = el.checked; save(); } return; }
+  if (el.dataset.bind === 'a:wll') { const a = curAsset(); if (a) { a.wll = el.value = normWll(el.value); save(); if (isWide()) renderList(); } return; }
   if (el.dataset.toggle) { S.settings[el.dataset.toggle] = el.checked; save(); return; }
   if (el.id === 'camInput' || el.id === 'pickInput') { const files = [...el.files]; el.value = ''; if (files.length && photoTarget) addPhotos(photoTarget, files); return; }
   if (el.id === 'fileInput') {
@@ -376,7 +414,9 @@ async function boot() {
   const ok = await DB.open();
   const st = ok ? await DB.get('kv', 'state').catch(() => null) : null;
   if (st && st.v) { S = Object.assign(blankState(), st); S.settings = Object.assign(blankState().settings, st.settings); }
+  migrate(st && st.v ? st.settings : null);
   normVoice();
+  if (st && st.v) saveNow().catch(() => {});
   const route = S.settings.onboarded ? { name: 'home' } : { name: 'welcome' };
   UI.route = route; history.replaceState(route, '');
   render();
