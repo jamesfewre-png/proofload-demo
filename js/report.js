@@ -1,5 +1,5 @@
 'use strict';
-/* Proofload reports: the inspection report document, file exports, backup, and sample data. */
+/* TagRound reports: the inspection report document, file exports, backup, and sample data. */
 
 const DOC_CSS = `
 .doc { --ink:#17212B; --ink2:#4A5763; --line:#C7CFD6; --pass:#17794A; --fail:#BF261C; --repair:#9A5300; --missing:#515D69;
@@ -169,7 +169,7 @@ function renderDoc(m, photoMap, opts = {}) {
       <div><div class="box">${m.signInspector ? `<img src="${m.signInspector}" alt="Inspector signature">` : ''}</div><b>${esc(m.inspector)}</b><span>Inspector</span>${String(m.inspectorQuals || '').trim() ? `<span>Competency: ${esc(m.inspectorQuals)}</span>` : ''}<span>${m.issuedAt ? 'Issued ' + fmtDate(m.issuedAt) : ''}</span></div>
       <div><div class="box">${m.signClient ? `<img src="${m.signClient}" alt="Client signature">` : ''}</div><b>${esc(m.clientRep || '')}</b><span>${m.signClient ? 'Received for ' + esc(c.name) : 'Not signed by the client'}</span></div>
     </div>
-    <footer class="doc-foot"><p style="font-size:12px;font-weight:700;color:#17212B;margin-bottom:8px">This is a periodic inspection record. It is not a proof load test certificate. Any proof load test referred to was carried out separately, under its own certificate.</p>${esc(m.disclaimer)}<br>${opts.draft ? 'Draft' : 'Report ' + esc(reportNo(m))}, prepared with Proofload.</footer>
+    <footer class="doc-foot"><p style="font-size:12px;font-weight:700;color:#17212B;margin-bottom:8px">This is a periodic inspection record. It is not a proof load test certificate. Any proof load test referred to was carried out separately, under its own certificate.</p>${esc(m.disclaimer)}<br>${opts.draft ? 'Draft' : 'Report ' + esc(reportNo(m))}, prepared with TagRound.</footer>
   </article>`;
 }
 /* Page marks for printing: report number and business bottom left, page count bottom right. */
@@ -220,7 +220,7 @@ async function makeBackup() {
 }
 async function applyBackup(text) {
   const data = JSON.parse(text);
-  if (!data || data.app !== 'proofload' || !data.state || !Array.isArray(data.state.visits)) throw new Error('This is not a Proofload backup file.');
+  if (!data || data.app !== 'proofload' || !data.state || !Array.isArray(data.state.visits)) throw new Error('This is not a TagRound backup file.');
   Voice.stopPlay();
   await DB.clear('photos'); await DB.clear('audio'); PH.clear();
   for (const [id, url] of Object.entries(data.photos || {})) await DB.put('photos', id, url);

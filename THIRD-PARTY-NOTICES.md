@@ -1,6 +1,6 @@
 # Third-party notices
 
-Proofload's on-device voice notes use the open-source components below. Verified 16 November 2026 from the sources named.
+TagRound's on-device voice notes use the open-source components below. Verified 16 November 2026 from the sources named.
 
 ## transformers.js (`@huggingface/transformers` 3.8.1)
 - File: `vendor/transformers/transformers.min.js` (the package's `dist/transformers.min.js`, which bundles onnxruntime-web and `@huggingface/jinja`).

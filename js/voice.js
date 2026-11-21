@@ -1,5 +1,5 @@
 'use strict';
-/* Proofload voice notes: the download manager, the recorder, the queue and the link to the on-device typer (js/voice-worker.js).
+/* TagRound voice notes: the download manager, the recorder, the queue and the link to the on-device typer (js/voice-worker.js).
    Everything stays on this device. The only requests made are for this app's own files. */
 
 const VOICE_CACHE = 'proofload-voice-v1';
@@ -131,7 +131,7 @@ const Voice = {
     catch (e) {
       this._starting = false;
       const n = e && e.name;
-      this.showError(inspId, n === 'NotAllowedError' || n === 'SecurityError' ? 'Proofload is not allowed to use the microphone. Allow it in this browser\'s site settings, then tap record again.'
+      this.showError(inspId, n === 'NotAllowedError' || n === 'SecurityError' ? 'TagRound is not allowed to use the microphone. Allow it in this browser\'s site settings, then tap record again.'
         : n === 'NotFoundError' || n === 'OverconstrainedError' ? 'No microphone was found on this device.'
         : n === 'NotReadableError' ? 'The microphone is busy. Close any other app using it, then tap record again.'
         : 'The microphone could not be started. Try again.');

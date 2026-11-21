@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Proofload on a phone and a tablet</title>
+<title>TagRound on a phone and a tablet</title>
 <style>
   body { margin: 0; background: #CDD4DA; font: 15px system-ui, sans-serif; color: #17212B; }
   .bar { display: flex; gap: 8px; padding: 10px 14px; align-items: center; }
@@ -15,7 +15,7 @@
 </head>
 <body>
 <div class="bar"><b>Preview as</b><a href="?d=phone" id="l-phone">Phone</a><a href="?d=tablet" id="l-tablet">Tablet, upright</a><a href="index.html">Full window</a></div>
-<div class="stage"><iframe id="f" src="index.html" title="Proofload"></iframe></div>
+<div class="stage"><iframe id="f" src="index.html" title="TagRound"></iframe></div>
 <script>
   var d = new URLSearchParams(location.search).get('d') === 'tablet' ? 'tablet' : 'phone';
   var f = document.getElementById('f');

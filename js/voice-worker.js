@@ -1,4 +1,4 @@
-// Proofload voice worker: on-device Whisper (base.en, q8, WASM) via the self-hosted transformers.js.
+// TagRound voice worker: on-device Whisper (base.en, q8, WASM) via the self-hosted transformers.js.
 // Start it with: new Worker('js/voice-worker.js', { type: 'module' })
 // Nothing here touches the network except same-origin fetches of /models and /vendor.
 //

@@ -1,5 +1,5 @@
 'use strict';
-/* Proofload UI: icons, small components and every screen as a template function. */
+/* TagRound UI: icons, small components and every screen as a template function. */
 
 const UI = { route: { name: 'home' }, filter: 'all', q: '', typeOpen: false, nv: null, justIssued: false };
 
@@ -106,7 +106,7 @@ function viewWelcome() {
   const t = TAGS[tagFor(todayISO())];
   return `<div class="welcome">
     <div class="welcome-side">
-      <div class="wordmark">${markSVG(t.hex, 34)}Proofload</div>
+      <div class="wordmark">${markSVG(t.hex, 34)}TagRound</div>
       <div><h1>Inspect it. Tag it. Send the report from site.</h1>
       <p>A lifting gear register and inspection report on your phone or tablet. It works with no signal, and your records stay on this device. It records inspections. It does not carry out or certify proof load tests.</p></div>
       <div>${tagChip(tagFor(todayISO()), t.name + ' tag, ' + quarterOf(todayISO()), 'lg')}</div>
@@ -115,7 +115,7 @@ function viewWelcome() {
       <h2 style="margin-top:0">Two details and you are ready</h2>
       <label class="field"><span>Your business name, as it should appear on reports</span><input class="input" name="company" autocomplete="organization" required></label>
       <label class="field"><span>Your name</span><input class="input" name="inspector" autocomplete="name" required></label>
-      <button class="btn btn-primary btn-lg btn-block" type="submit">Set up Proofload</button>
+      <button class="btn btn-primary btn-lg btn-block" type="submit">Set up TagRound</button>
       <button class="btn btn-secondary btn-block" type="button" data-act="load-demo" style="margin-top:10px">Look around with sample data</button>
       <p class="small muted" style="margin-top:16px">You can add your logo, ABN and contact details later in Settings.</p>
     </form>
@@ -536,7 +536,7 @@ function viewDue() {
 const backupLine = () => { const d = S.settings.lastBackupAt ? new Date(S.settings.lastBackupAt) : null; return d && !isNaN(d) ? 'Last backup: ' + fmtDate(toISO(d)) + '.' : 'No backup saved yet.'; };
 function viewSettings() {
   const s = S.settings, co = s.company;
-  return `<div class="page"><header class="page-head"><div><h1>Settings</h1><p class="sub">Proofload ${APP.version}. Everything is stored on this device.</p></div></header>
+  return `<div class="page"><header class="page-head"><div><h1>Settings</h1><p class="sub">${APP.name} ${APP.version}. Everything is stored on this device.</p></div></header>
     <div class="page-body" data-scroll="settings"><div class="wrap set-grid">
       <div class="card"><h3>Your business</h3><p>Shown at the top of every report.</p>
         ${co.logo ? `<img class="logo-prev" src="${co.logo}" alt="Your logo">` : ''}

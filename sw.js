@@ -1,9 +1,9 @@
-/* Proofload offline support. Network first, so an update is picked up when there is signal;
+/* TagRound offline support (cache names keep the internal prefix 'proofload'). Network first, so an update is picked up when there is signal;
    the cached copy is used when there is none. Only this app's own files are ever requested.
    The voice files (vendor/ and models/) are different: the app downloads them on request into their own
    cache, proofload-voice-v1, and they are served from there first. They are never put in the app cache
    and an app update never deletes them. */
-const CACHE = 'proofload-v5';
+const CACHE = 'proofload-v6';
 const VOICE = 'proofload-voice-v1';
 const FILES = ['./', 'index.html', 'app.css', 'js/core.js', 'js/ui.js', 'js/report.js', 'js/voice.js', 'js/voice-worker.js', 'js/app.js', 'voice-pack.json', 'manifest.webmanifest', 'icon.svg'];
 

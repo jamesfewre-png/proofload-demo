@@ -1,5 +1,5 @@
 'use strict';
-/* Proofload app: rendering, navigation, every user action, photos, signatures, start-up. */
+/* TagRound app: rendering, navigation, every user action, photos, signatures, start-up. */
 
 /* ---------- rendering ---------- */
 function render() {
@@ -302,7 +302,7 @@ const ACT = {
   'pick-logo'() { fileMode = 'logo'; const f = $('#fileInput'); f.accept = 'image/*'; f.click(); },
   'clear-logo'() { S.settings.company.logo = ''; save(); render(); },
   async backup() {
-    download('Proofload backup ' + todayISO() + '.json', 'application/json', await makeBackup());
+    download('TagRound backup ' + todayISO() + '.json', 'application/json', await makeBackup());
     S.settings.lastBackupAt = new Date().toISOString(); save(); render();
     toast('Backup saved. Keep it somewhere safe.');
   },
