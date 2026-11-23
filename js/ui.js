@@ -1,7 +1,7 @@
 'use strict';
 /* TagRound UI: icons, small components and every screen as a template function. */
 
-const UI = { route: { name: 'home' }, filter: 'all', q: '', typeOpen: false, nv: null, justIssued: false };
+const UI = { route: { name: 'home' }, filter: 'all', q: '', typeOpen: false, nv: null, justIssued: false, imp: null, impSheet: null, lic: null, lapseOk: false };
 
 /* ---------- icons ---------- */
 const ICONS = {
@@ -83,10 +83,14 @@ const field = (label, bind, value, attrs = '') => `<label class="field"><span>${
 const area = (label, bind, value, attrs = '') => `<label class="field"><span>${label}</span><textarea class="input" data-bind="${bind}" ${attrs}>${esc(value)}</textarea></label>`;
 const backBtn = (label = 'Back to items') => `<button class="btn btn-quiet btn-icon only-phone" data-act="panel" data-panel="" aria-label="${label}">${ic('back')}</button>`;
 
+/* The evaluation chip: shown whenever there is no valid licence. As a button it opens Settings (44 px tap area around the small chip). */
+const evalChip = () => '<span class="evalchip">Evaluation</span>';
+const evalBtn = () => licensed() ? '' : '<button class="evalbtn" type="button" data-act="nav" data-to="settings" title="Evaluation copy. Open Settings to enter a licence key.">' + evalChip() + '</button>';
+
 /* ---------- navigation chrome ---------- */
 function navItems(r) {
   const dl = dueAssets(), due = dl.length, over = dl.filter(d => d.days < 0).length;
-  const cur = (r.name === 'visit' || r.name === 'report') ? 'home' : r.name;
+  const cur = (r.name === 'visit' || r.name === 'report') ? 'home' : r.name === 'import' ? 'register' : r.name;
   return [['home', 'Visits', 'clipboard'], ['register', 'Register', 'list'], ['due', 'Due', 'clock'], ['settings', 'Settings', 'sliders']]
     .map(([n, l, i]) => `<button class="tab" data-act="nav" data-to="${n}" ${cur === n ? 'aria-current="page"' : ''}${n === 'due' && due ? ` aria-label="Due, ${due} due within 30 days${over ? ', ' + over + ' overdue' : ''}"` : ''}>${ic(i, 24)}<span>${l}</span>${n === 'due' && due ? `<span class="dot${over ? ' over' : ''}">${due}</span>` : ''}</button>`).join('');
 }
@@ -96,7 +100,7 @@ const tabbar = r => `<nav class="tabbar" aria-label="Main">${navItems(r)}</nav>`
 function shell(r) {
   if (r.name === 'welcome') return viewWelcome();
   const top = ['home', 'register', 'due', 'settings'].includes(r.name) && !(r.name === 'register' && r.assetId);
-  const body = r.name === 'visit' ? viewVisit(r) : r.name === 'report' ? viewReport(r) : r.name === 'register' ? viewRegister(r)
+  const body = r.name === 'visit' ? viewVisit(r) : r.name === 'report' ? viewReport(r) : r.name === 'register' ? viewRegister(r) : r.name === 'import' ? viewImport(r)
     : r.name === 'due' ? viewDue() : r.name === 'settings' ? viewSettings() : viewHome();
   return `<div class="shell ${top ? 'is-top' : ''}">${rail(r)}<main class="stage">${body}</main>${tabbar(r)}</div>`;
 }
@@ -117,6 +121,7 @@ function viewWelcome() {
       <label class="field"><span>Your name</span><input class="input" name="inspector" autocomplete="name" required></label>
       <button class="btn btn-primary btn-lg btn-block" type="submit">Set up TagRound</button>
       <button class="btn btn-secondary btn-block" type="button" data-act="load-demo" style="margin-top:10px">Look around with sample data</button>
+      <button class="btn btn-quiet btn-block link" type="button" data-act="licence-open" style="margin-top:6px">Have a licence key?</button>
       <p class="small muted" style="margin-top:16px">You can add your logo, ABN and contact details later in Settings.</p>
     </form>
   </div>`;
@@ -157,15 +162,19 @@ function backupBanner() {
   const t = backupReminder();
   return t ? `<div class="backupbar"><b>Back up your records</b>Your records are only on this device. Last backup: ${t}.<button class="btn btn-secondary" data-act="backup">${ic('download')}Save a backup file</button></div>` : '';
 }
+/* Once per app start, and only a note: nothing is ever disabled. */
+function lapseBanner() {
+  return licenceLapsed() && !UI.lapseOk ? `<div class="banner note lapsebar"><div>${esc(lapseText())}</div><button class="btn btn-secondary" data-act="lapse-ok">OK</button></div>` : '';
+}
 function viewHome() {
   const t = todayISO(), tag = tagFor(t);
   const open = S.visits.filter(v => v.status === 'open');
   const issued = S.visits.filter(v => v.status === 'issued').sort((a, b) => b.date.localeCompare(a.date));
   return `<div class="page">
-    <header class="page-head"><div><h1>Visits</h1><p class="sub">${fmtLong(t)}</p></div>${tagChip(tag, TAGS[tag].name + ' tag, ' + quarterOf(t))}</header>
+    <header class="page-head"><div><h1>Visits</h1><p class="sub">${fmtLong(t)}</p></div><div class="head-chips">${evalBtn()}${tagChip(tag, TAGS[tag].name + ' tag, ' + quarterOf(t))}</div></header>
     <div class="page-body" data-scroll="home"><div class="wrap home-grid">
       <div>
-        ${backupBanner()}
+        ${lapseBanner()}${backupBanner()}
         <button class="btn btn-primary btn-lg btn-block" data-act="new-visit">${ic('plus')}Start a visit</button>
         ${open.length ? '<h2>In progress</h2>' + open.map(visitCard).join('') : ''}
         ${!S.visits.length ? '<div class="empty" style="margin-top:18px"><b>No visits yet</b>Start a visit, add the gear you inspect, and issue the report before you leave site.</div>' : ''}
@@ -411,7 +420,7 @@ function viewReport(r) {
   if (r.preview && v.status !== 'issued') return `<div class="page">
     <div class="toolbar">
       <button class="btn btn-quiet btn-icon" data-act="back-report" aria-label="Back to the visit">${ic('back')}</button>
-      <span class="title">Draft preview</span>
+      <span class="title">Draft preview</span>${evalBtn()}
     </div>
     <div class="docwrap" data-scroll="doc"><div style="position:relative;max-width:820px;margin:0 auto">${renderDoc(makeSnapshot(v), null, { draft: true })}</div></div>
   </div>`;
@@ -429,7 +438,7 @@ function viewReport(r) {
   return `<div class="page">
     <div class="toolbar">
       <button class="btn btn-quiet btn-icon" data-act="nav" data-to="home" aria-label="Back to visits">${ic('back')}</button>
-      <span class="title">Report ${esc(reportNo(v))}</span>
+      <span class="title">Report ${esc(reportNo(v))}</span>${evalBtn()}
       <div class="tb-actions">
         <button class="btn btn-primary" data-act="print">${ic('print')}Print or save PDF</button>
         ${navigator.share ? `<button class="btn btn-secondary" data-act="share-report">${ic('share')}Share</button>` : ''}
@@ -496,6 +505,7 @@ function viewRegister(r) {
   return `<div class="split ${a ? 'has-detail' : ''}">
     <section class="pane pane-list" id="paneList">
       <div class="pane-head" style="padding-left:16px;padding-right:16px"><h1 style="margin-top:6px">Register</h1><p class="sub">${plural(live, 'item')} across ${plural(S.clients.length, 'client')}</p>
+        <button class="btn btn-secondary btn-block" data-act="imp-start" style="margin-top:12px">${ic('table')}Import items from a spreadsheet</button>
         <input class="input" type="search" id="regSearch" placeholder="Search ID, type or client" value="${esc(UI.q)}" aria-label="Search the register" style="margin-top:12px"></div>
       <div class="pane-body" data-scroll="reg" id="regRows" style="padding-top:8px">${regRows(r)}</div>
     </section>
@@ -537,6 +547,21 @@ function viewDue() {
 
 /* ---------- settings ---------- */
 const backupLine = () => { const d = S.settings.lastBackupAt ? new Date(S.settings.lastBackupAt) : null; return d && !isNaN(d) ? 'Last backup: ' + fmtDate(toISO(d)) + '.' : 'No backup saved yet.'; };
+function licenceCard() {
+  const ok = licensed(), i = LIC.info;
+  const row = (k, v) => `<div class="qrow"><span class="muted">${k}</span><b style="text-align:right">${esc(v)}</b></div>`;
+  const foot = `<p class="small muted" style="margin:12px 0 0">Licences and renewals: ${esc(SELLER.name)}. ${esc(SELLER.contact)}.</p>`;
+  if (ok) return `<div class="card" id="licCard"><h3>Licence</h3>
+      <div style="margin-top:6px">${row('Licensed to', i.name)}${row('Seats', String(i.seats))}${row('Issued', fmtDate(i.issued))}${row('Updates until', fmtDate(i.updatesUntil))}</div>
+      ${licenceLapsed() ? `<div class="banner note" style="margin-top:10px">${esc(lapseText())}</div>` : ''}
+      <p class="small muted" style="margin:10px 0 12px">Seats is the number of inspectors the licence covers. It is not checked by the app.</p>
+      <div class="btn-row"><button class="btn btn-secondary" data-act="licence-open">Replace key</button><button class="btn btn-secondary" data-act="licence-file">Import key file</button></div>${foot}</div>`;
+  const problem = LIC.status === 'invalid' ? LIC_MSG.bad : LIC.status === 'unchecked' ? LIC_MSG.noCrypto : '';
+  return `<div class="card" id="licCard"><h3 class="lic-title">Licence ${evalChip()}</h3>
+      <p>Evaluation copy. Everything works, and reports carry an evaluation footer until you enter a licence key.</p>
+      ${problem ? `<div class="banner stop" role="alert" style="margin-bottom:12px"><div>${esc(problem)}</div></div>` : ''}
+      <div class="btn-row"><button class="btn btn-primary" data-act="licence-open">Enter licence key</button><button class="btn btn-secondary" data-act="licence-file">Import key file</button></div>${foot}</div>`;
+}
 function viewSettings() {
   const s = S.settings, co = s.company;
   return `<div class="page"><header class="page-head"><div><h1>Settings</h1><p class="sub">${APP.name} ${APP.version}. Everything is stored on this device.</p></div></header>
@@ -549,6 +574,7 @@ function viewSettings() {
         ${field('Email', 's:company.email', co.email, 'type="email" autocomplete="email"')}
         ${field('Address', 's:company.address', co.address, 'autocomplete="street-address"')}
       </div>
+      ${licenceCard()}
       <div class="card"><h3>Inspector</h3><p>The default for new visits. You can change it on any visit.</p>
         ${field('Name', 's:inspector.name', s.inspector.name, 'autocomplete="name"')}
         ${field('Competency shown on reports', 's:inspector.quals', s.inspector.quals, 'autocomplete="off" placeholder="For example: intermediate rigging licence, 12 years inspecting lifting gear"')}
@@ -602,12 +628,105 @@ function sheetNewVisit() {
     <div class="sheet-foot"><button class="btn btn-primary" type="submit" ${nv.mode === 'existing' && !nv.clientId ? 'disabled' : ''}>Start the visit</button></div>
   </form>`;
 }
+/* ---------- spreadsheet import (state lives in UI.imp only until the Import press) ---------- */
+const IMP_TARGETS = [['skip', "Don't import"], ['ident', 'ID or serial number'], ['type', 'Type'], ['wll', 'Working load limit'], ['unit', 'WLL unit, t or kg'], ['desc', 'Description'], ['extra', 'Add to the description'], ['make', 'Manufacturer'], ['certNo', 'Test certificate number'], ['location', 'Where it is kept'], ['std', 'Standard reference']];
+const impRows = m => m.sheets[m.sheet].rows;
+const impData = m => impRows(m).slice(m.headerRow + 1);
+const impColName = k => (k >= 26 ? String.fromCharCode(64 + Math.floor(k / 26)) : '') + String.fromCharCode(65 + k % 26);
+const impHead = (c, k) => c.header || 'Column ' + impColName(k);
+function sheetImport() {
+  const st = UI.impSheet, have = S.clients.length > 0, ok = st.mode === 'existing' ? !!st.clientId : st.name.trim() !== '';
+  const pickList = S.clients.map(c => {
+    const n = S.assets.filter(a => a.clientId === c.id && !a.retired).length;
+    return `<button class="pick" type="button" data-act="imp-client" data-id="${c.id}" aria-pressed="${st.clientId === c.id}"><span class="grow"><b>${esc(c.name)}</b><small>${esc(c.site || 'No site recorded')}, ${plural(n, 'item')} on the register</small></span></button>`;
+  }).join('');
+  return `<div class="sheet" role="dialog" aria-label="Import items from a spreadsheet">
+    <div class="sheet-head"><h3>Import items from a spreadsheet</h3><button class="btn btn-quiet btn-icon" type="button" data-act="close-overlay" aria-label="Close">${ic('x')}</button></div>
+    <div class="sheet-body">
+      ${have ? `<div class="unit" style="margin-bottom:14px"><button type="button" data-act="imp-mode" data-mode="existing" aria-pressed="${st.mode === 'existing'}">Existing client</button><button type="button" data-act="imp-mode" data-mode="new" aria-pressed="${st.mode === 'new'}">New client</button></div>` : ''}
+      ${st.mode === 'existing' ? pickList : `
+        <label class="field"><span>Client</span><input class="input" data-impf="name" value="${esc(st.name)}" autocomplete="off"></label>
+        <label class="field"><span>Site</span><input class="input" data-impf="site" value="${esc(st.site)}" autocomplete="off" placeholder="Workshop, 12 Example Rd, Welshpool"></label>`}
+      <p class="small muted">CSV or Excel (.xlsx). The file is read on this device and never leaves it.</p>
+      <p class="small imp-err" role="alert">${esc(st.error || '')}</p>
+    </div>
+    <div class="sheet-foot"><button class="btn btn-primary" type="button" id="impFileBtn" data-act="imp-file" ${ok ? '' : 'disabled'}>Choose the spreadsheet</button></div>
+  </div>`;
+}
+function viewImport(r) { const m = UI.imp; return r.step === 'review' ? impReview(m) : impMap(m); }
+function impMap(m) {
+  const rows = impRows(m), data = impData(m), n = data.filter(r => r.some(c => String(c).trim() !== '')).length;
+  const need = unitChoiceNeeded(m.cols, data), wi = m.cols.findIndex(c => c.target === 'wll');
+  const hint = m.cols.every(c => c.target === 'skip') ? 'Match at least one column.' : need && !m.bareUnit ? 'Choose t or kg for the working load limit.' : '';
+  const headOpts = rows.slice(0, 20).map((r, i) => {
+    let t = 'Row ' + (i + 1) + ': ' + (r.map(c => String(c).trim()).filter(Boolean).join(', ') || 'empty');
+    if (t.length > 60) t = t.slice(0, 57) + '...';
+    return `<option value="${i}" ${i === m.headerRow ? 'selected' : ''}>${esc(t)}</option>`;
+  }).join('');
+  const cards = m.cols.map((c, k) => `<div class="card imp-col">
+      <h3>${esc(impHead(c, k))}</h3>
+      ${c.samples.length ? `<p class="small muted">For example: ${esc(c.samples.join(', '))}</p>` : ''}
+      <select class="input" data-imp="col" data-i="${k}" aria-label="What the ${esc(impHead(c, k))} column holds">${IMP_TARGETS.map(([v, l]) => `<option value="${v}" ${c.target === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    </div>`).join('');
+  return `<div class="page"><header class="page-head"><div><h1>Match the columns</h1><p class="sub">${esc(m.fileName)}, ${plural(n, 'row')}</p></div></header>
+    <div class="page-body" data-scroll="import"><div class="wrap imp-wrap">
+      <p>Check what each column holds. Set any column you do not need to Don't import.</p>
+      ${m.sheets.length > 1 ? `<label class="field"><span>Sheet</span><select class="input" data-imp="sheet">${m.sheets.map((s, i) => { const e = !s.rows.some(r => r.some(c => String(c).trim() !== '')); return `<option value="${i}" ${i === m.sheet ? 'selected' : ''} ${e ? 'disabled' : ''}>${esc(s.name)}${e ? ' (empty)' : ''}</option>`; }).join('')}</select></label>` : ''}
+      <label class="field"><span>Headings are on</span><select class="input" data-imp="head">${headOpts}</select></label>
+      ${cards}
+      ${need ? `<div class="card imp-col"><h3 id="impUnitQ">Numbers in the ${esc(impHead(m.cols[wi], wi))} column are in</h3>
+        <div class="unit" role="group" aria-labelledby="impUnitQ" style="margin:8px 0"><button type="button" data-act="imp-unit" data-unit="t" aria-pressed="${m.bareUnit === 't'}">t</button><button type="button" data-act="imp-unit" data-unit="kg" aria-pressed="${m.bareUnit === 'kg'}">kg</button></div>
+        <p class="small muted">The column does not say whether it is tonnes or kilograms.</p></div>` : ''}
+    </div></div>
+    <div class="imp-foot"><div class="wrap imp-wrap">${hint ? `<p class="small imp-hint" id="impHint">${hint}</p>` : ''}
+      <div class="btn-row"><button class="btn btn-secondary" data-act="imp-cancel">Cancel</button><button class="btn btn-primary" data-act="imp-check" ${hint ? 'disabled aria-describedby="impHint"' : ''}>Check the items</button></div></div></div></div>`;
+}
+const impIsOn = (it, f) => f === 'all' || (f === 'check' && it.status === 'check') || (f === 'dup' && it.status === 'dup');
+const impBadge = it => it.status === 'dup' ? '<span class="badge repair">Duplicate</span>' : !it.on ? '<span class="badge todo">Skip</span>' : it.status === 'ready' ? '<span class="badge pass">Ready</span>' : '<span class="badge due">Check</span>';
+const impReasons = it => it.reasons.length ? '<ul class="imp-reasons">' + it.reasons.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '';
+const impBtnLabel = n => n === 0 ? 'Nothing to import' : 'Import ' + plural(n, 'item');
+function impCardInner(it, i) {
+  const t = typeById(it.type), extra = [it.make, it.certNo && 'Test certificate ' + it.certNo, it.location && 'Kept at ' + it.location].filter(Boolean).join(', ');
+  const wl = t.cap ? 'Rated capacity' : 'Working load limit';
+  return `<div class="imp-top"><label class="check"><input type="checkbox" data-imp="on" data-i="${i}" ${it.on ? 'checked' : ''}><span class="imp-lbl">${it.status === 'dup' ? 'Import anyway' : 'Import this item'}</span></label><span class="imp-st">${impBadge(it)}</span><span class="small muted">Row ${it.row}</span></div>
+    <div class="imp-rs">${impReasons(it)}</div>
+    <label class="field"><span>ID or serial number</span><input class="input" data-imp="ident" data-i="${i}" value="${esc(it.ident)}" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+    <label class="field"><span>Type</span><select class="input" data-imp="type" data-i="${i}">${TYPES.map(x => `<option value="${x.id}" ${x.id === it.type ? 'selected' : ''}>${esc(typeById(x.id).name)}</option>`).join('')}</select></label>
+    ${t.wll ? `<div class="field"><span class="label">${wl}</span><div class="imp-wll"><input class="input" data-imp="wll" data-i="${i}" value="${esc(it.wll)}" inputmode="decimal" autocomplete="off" aria-label="${wl}"><select class="input" data-imp="wllUnit" data-i="${i}" aria-label="Unit"><option value="t" ${it.wllUnit !== 'kg' ? 'selected' : ''}>t</option><option value="kg" ${it.wllUnit === 'kg' ? 'selected' : ''}>kg</option></select></div></div>` : ''}
+    ${it.desc ? `<p class="small imp-desc">${esc(it.desc)}</p>` : ''}${extra ? `<p class="small muted">${esc(extra)}</p>` : ''}`;
+}
+const impCounts = items => ({ all: items.length, check: items.filter(i => i.status === 'check').length, dup: items.filter(i => i.status === 'dup').length });
+function impReview(m) {
+  const items = m.items, sum = importSummary(items), cn = impCounts(items), ov = m.clientId && openVisitFor(m.clientId);
+  const F = [['all', 'All'], ['check', 'To check'], ['dup', 'Duplicates']];
+  return `<div class="page"><header class="page-head"><div><h1>Check before importing</h1><p class="sub">${esc(m.clientName)}${m.clientId ? '' : ' (new client)'}</p></div></header>
+    <div class="page-body" data-scroll="import"><div class="wrap imp-wrap">
+      <p class="imp-sum" id="impSum" aria-live="polite"><b>${esc(sum.text)}</b></p>
+      ${ov ? `<div class="banner note" style="margin-bottom:10px">${esc(client(m.clientId).name)} has a visit in progress. Imported items are not added to it. They come forward from the next visit you start.</div>` : ''}
+      ${items.truncated ? '<div class="banner note" style="margin-bottom:10px">Only the first 5000 rows are shown.</div>' : ''}
+      <div class="filters" role="group" aria-label="Show">${F.map(([f, l]) => `<button class="filter" data-act="imp-filter" data-f="${f}" aria-pressed="${m.filter === f}">${l} ${cn[f]}</button>`).join('')}</div>
+      <div id="impList">${items.map((it, i) => `<div class="card imp-card" data-card="${i}" ${impIsOn(it, m.filter) ? '' : 'hidden'}>${impCardInner(it, i)}</div>`).join('')}</div>
+      <p class="small muted" style="margin-top:12px">Missing IDs and WLLs still have to be filled in before a report can be issued.</p>
+    </div></div>
+    <div class="imp-foot"><div class="wrap imp-wrap"><div class="btn-row"><button class="btn btn-secondary" data-act="imp-back">Back</button><button class="btn btn-primary" id="impGo" data-act="imp-commit" ${sum.toImport ? '' : 'disabled'}>${impBtnLabel(sum.toImport)}</button></div></div></div></div>`;
+}
 function sheetRevise(v) {
   return `<div class="sheet" role="dialog" aria-labelledby="reviseTitle">
     <div class="sheet-head"><h3 id="reviseTitle">Revise this report?</h3><button class="btn btn-quiet btn-icon" data-act="close-overlay" aria-label="Close">${ic('x')}</button></div>
     <div class="sheet-body"><p>${esc(`The visit opens for editing. When you issue it again it keeps number ${v.reportNo}, becomes Rev ${(v.rev || 0) + 1}, and says it replaces the version issued ${fmtDate(v.issuedAt)}. The earlier version is kept. You and the client sign again.`)}</p>
       <label class="field" style="margin-top:14px"><span>Why does it need revising?</span><textarea class="input" id="reviseWhy" autocomplete="off"></textarea></label></div>
     <div class="sheet-foot"><button class="btn btn-secondary" data-act="close-overlay">Cancel</button><button class="btn btn-primary" id="reviseOk" data-act="revise-ok" disabled>Revise report</button></div>
+  </div>`;
+}
+function sheetLicence(st) {
+  return `<div class="sheet" role="dialog" aria-label="Licence key">
+    <div class="sheet-head"><h3>Licence key</h3><button class="btn btn-quiet btn-icon" type="button" data-act="close-overlay" aria-label="Close">${ic('x')}</button></div>
+    <div class="sheet-body">
+      <label class="field"><span>Paste your licence key</span><textarea class="input" id="licText" rows="5" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">${esc(st.text)}</textarea></label>
+      <p class="small muted">It starts with TR1. Capitals, spaces and line breaks do not matter.</p>
+      <p class="small imp-err" id="licErr" role="alert">${esc(st.error || '')}</p>
+    </div>
+    <div class="sheet-foot"><button class="btn btn-secondary" type="button" data-act="licence-file">Import key file</button><button class="btn btn-primary" type="button" id="licGo" data-act="licence-use" ${String(st.text).trim() ? '' : 'disabled'}>Use this key</button></div>
   </div>`;
 }
 function sheetSign(who) {

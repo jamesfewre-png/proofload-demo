@@ -1,7 +1,7 @@
 'use strict';
 /* TagRound core: constants, storage, state, helpers. No network calls anywhere in this app. */
 
-const APP = { name: 'TagRound', version: '0.3.2' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
+const APP = { name: 'TagRound', version: '0.4.0' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
 
 const TAGS = {
   red:    { name: 'Red',    hex: '#D7332A', on: '#FFFFFF' },
@@ -127,7 +127,8 @@ function blankState() {
       prefix: 'LR', nextNo: 1,
       photoEveryItem: false, tagStart: 0, lastBackupAt: '', intervalsV2: true,
       disclaimer: DEFAULT_DISCLAIMER,
-      onboarded: false
+      onboarded: false,
+      licence: ''
     },
     clients: [], assets: [], visits: [], inspections: []
   };
@@ -469,12 +470,108 @@ function nextNoWarning(prefix, n) {
   return max && max >= n ? `${fmtReportNo(prefix, max)} has already been issued. The next free number is ${max + 1}.` : '';
 }
 
+/* ---------- licence: a deterrent, never a lock. Offline check of a signed key. ---------- */
+/* A key is a signed payload (ECDSA P-256, SHA-256): ver(1) id(4) issued(2) updatesUntil(2) seats(1) nameLen(1) name(<=40), then a 64-byte
+   signature, written as 'TR1-' + Crockford base32. Nothing is ever disabled: no key only adds an evaluation footer to reports. */
+const SELLER = { name: 'AI Flow Systems', contact: 'Contact your TagRound supplier' };
+const LICENCE_PUBLIC_KEY = 'BIPxzmq5K23Y2dCsJrbL6e9Ecs2cbkLMetLlahKSqTfc0LkzaPUVWkBaFfqBNAbV9K6ejNQjlzEujhEXjTyYP20';
+const EVAL_FOOTER = 'Unlicensed evaluation copy. Not for issue to clients.';
+const LIC_MSG = { bad: 'That key did not check out. Check it was copied completely, or contact us.', noCrypto: 'Licence keys can only be checked when TagRound is opened from its secure web address.' };
+let licencePub = LICENCE_PUBLIC_KEY;   /* test seam: tests point this at a throwaway public key; the app never changes it */
+const LIC = { status: 'none', info: null };   /* 'none' | 'valid' | 'invalid' | 'unchecked' (no crypto here). In memory only. */
+const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const LIC_EPOCH = Date.UTC(2026, 0, 1);
+const licDate = n => new Date(LIC_EPOCH + n * 864e5).toISOString().slice(0, 10);
+function b32Encode(u8) {
+  let bits = 0, v = 0, o = '';
+  for (const b of u8) { v = (v << 8) | b; bits += 8; while (bits >= 5) { o += B32[(v >>> (bits - 5)) & 31]; bits -= 5; } v &= 255; }
+  if (bits) o += B32[(v << (5 - bits)) & 31];
+  return o;
+}
+const normLicenceKey = u8 => 'TR1-' + b32Encode(u8).match(/.{1,6}/g).join('-');
+/* Every plausible key in a text: one per 'TR1' (a key file may have a heading line), or the whole text when there is none. */
+function licenceCandidates(text) {
+  const up = String(text == null ? '' : text).toUpperCase(), starts = [];
+  const re = /TR[1IL]/g;   /* the prefix, with the same O/I/L leniency as the body */
+  for (let m = re.exec(up); m; m = re.exec(up)) { starts.push(m.index + 3); re.lastIndex = m.index + 1; }
+  if (!starts.length) starts.push(0);
+  const out = [];
+  starts.forEach(from => {
+    const chars = [];
+    for (let k = from; k < up.length; k++) {
+      let c = up[k];
+      if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '-' || /\s/.test(c)) continue;
+      if (c === 'O') c = '0'; else if (c === 'I' || c === 'L') c = '1';
+      if (B32.indexOf(c) < 0) break;
+      chars.push(c);
+    }
+    const dec = n => { let bits = 0, v = 0; const o = []; for (let k = 0; k < n && k < chars.length; k++) { v = (v << 5) | B32.indexOf(chars[k]); bits += 5; if (bits >= 8) { o.push((v >>> (bits - 8)) & 255); bits -= 8; v &= 255; } } return o; };
+    const head = dec(Math.ceil(11 * 8 / 5));
+    if (head.length < 11 || head[0] !== 1 || head[10] > 40) return;
+    const total = 11 + head[10] + 64, need = Math.ceil(total * 8 / 5);
+    if (chars.length < need) return;
+    const all = dec(need); if (all.length >= total) out.push(Uint8Array.from(all.slice(0, total)));
+  });
+  return out;
+}
+const parseLicenceKey = text => licenceCandidates(text)[0] || null;
+const licenceCrypto = () => typeof crypto !== 'undefined' && crypto && crypto.subtle ? crypto.subtle : null;
+/* { info, key } for the first candidate whose signature checks out, else null. Throws Error(LIC_MSG.noCrypto) when this page has no crypto.subtle. */
+async function licenceCheck(text, pub = licencePub) {
+  const cands = licenceCandidates(text); if (!cands.length) return null;
+  const sub = licenceCrypto(); if (!sub) throw new Error(LIC_MSG.noCrypto);
+  const key = await sub.importKey('raw', Uint8Array.from(atob(pub.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  for (const raw of cands) {
+    const n = raw.length - 64;
+    if (!(await sub.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, raw.slice(n), raw.slice(0, n)))) continue;
+    const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    return { key: normLicenceKey(raw), info: { id: dv.getUint32(1), issued: licDate(dv.getUint16(5)), updatesUntil: licDate(dv.getUint16(7)), seats: raw[9], name: new TextDecoder().decode(raw.slice(11, 11 + raw[10])) } };
+  }
+  return null;
+}
+async function verifyLicence(text, pub = licencePub) { const r = await licenceCheck(text, pub); return r ? r.info : null; }
+async function refreshLicence() {
+  LIC.status = 'none'; LIC.info = null;
+  try {
+    const k = typeof S.settings.licence === 'string' ? S.settings.licence.trim() : '';
+    if (!k) return LIC;
+    const info = await verifyLicence(k);
+    if (info) { LIC.status = 'valid'; LIC.info = info; } else LIC.status = 'invalid';
+  } catch (e) { LIC.status = 'unchecked'; LIC.info = null; }
+  return LIC;
+}
+const licensed = () => LIC.status === 'valid';
+const licenceLine = () => licensed() ? 'Licensed to ' + LIC.info.name : EVAL_FOOTER;
+const licenceLapsed = (today = todayISO()) => licensed() && today > LIC.info.updatesUntil;
+const lapseText = () => 'Updates and support ended ' + fmtDate(LIC.info.updatesUntil) + '. Standards and defect lists may be out of date. ' + SELLER.contact + ' to renew.';
+function storeLicence(text, info) {
+  const raw = parseLicenceKey(text);
+  S.settings.licence = raw ? normLicenceKey(raw) : String(text).trim();
+  LIC.status = 'valid'; LIC.info = info;
+  save();
+}
+/* result: 'ok' | 'renewed' | 'same' | 'confirm' | 'bad' | 'noCrypto'. 'confirm' stores nothing: the screen asks, then calls storeLicence(key, info). */
+async function applyLicenceText(text) {
+  await refreshLicence();
+  let r;
+  try { r = await licenceCheck(text); } catch (e) { return { result: 'noCrypto', info: null, current: licensed() ? LIC.info : null }; }
+  const current = licensed() ? { ...LIC.info } : null;
+  if (!r) return { result: 'bad', info: null, current };
+  const out = (result) => ({ result, info: r.info, current, key: r.key });
+  if (current && current.id === r.info.id) return out('same');
+  if (!current) { storeLicence(r.key, r.info); return out('ok'); }
+  const sameName = current.name.trim().toLowerCase() === r.info.name.trim().toLowerCase();
+  if (sameName && r.info.updatesUntil >= current.updatesUntil) { storeLicence(r.key, r.info); return out('renewed'); }
+  return out('confirm');
+}
+
 /* ---------- migrate: every default for older records, in one place. Safe to run twice. ---------- */
 function migrate(rawSettings) {
   const st = S.settings;
   /* 1. simple defaults, only where the field is missing */
   if (st.tagStart === undefined) st.tagStart = 0;
   if (st.lastBackupAt === undefined) st.lastBackupAt = '';
+  if (typeof st.licence !== 'string') st.licence = '';
   S.assets.forEach(a => { if (a.certNo === undefined) a.certNo = ''; });
   S.inspections.forEach(i => { if (!Array.isArray(i.actions)) i.actions = []; if (i.retest === undefined) i.retest = false; });
   S.visits.forEach(v => {
@@ -487,7 +584,7 @@ function migrate(rawSettings) {
   S.visits.forEach(v => { if (v.status === 'open') { if (v.signInspector && !v.signInspectorKey) v.signInspectorKey = sigKey(v, 'inspector'); if (v.signClient && !v.signClientKey) v.signClientKey = sigKey(v, 'client'); } });
   /* 2. freeze reports issued before snapshots existed, from the data as it stands now */
   S.visits.forEach(v => {
-    if (v.status === 'issued' && !v.snapshot) { v.snapshot = makeSnapshot(v); v.snapshot.migrated = true; }
+    if (v.status === 'issued' && !v.snapshot) { v.snapshot = makeSnapshot(v); v.snapshot.migrated = true; delete v.snapshot.licence; /* the licence line did not exist when these were issued */ }
     else if (v.snapshot === undefined) v.snapshot = null;
   });
   /* 3. gear not presented keeps the due date it already had (after the freeze, so frozen reports are untouched) */

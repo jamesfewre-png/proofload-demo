@@ -6,6 +6,9 @@ function render() {
   Voice.stopPlay();
   let r = UI.route;
   const r2 = routeFor(r); if (r2 !== r) r = UI.route = r2;
+  /* the import session lives only while its screens are showing; a reload or a step back past the end lands on the register */
+  if (r.name !== 'import' && UI.imp) UI.imp = null;
+  if (r.name === 'import' && (!UI.imp || (r.step === 'review' && !UI.imp.items))) { r = UI.route = UI.imp ? { name: 'import', step: 'map' } : { name: 'register' }; history.replaceState(r, ''); }
   /* a recording in progress is saved, not lost, if the screen moves away from its item */
   if (Voice.rec && !(r.name === 'visit' && r.panel === 'item' && r.itemId === Voice.rec.inspId)) Voice.stopRec();
   if (UI.voiceErr && !(r.name === 'visit' && r.itemId === UI.voiceErr.inspId)) UI.voiceErr = null;
@@ -68,7 +71,7 @@ function openOverlay(html, quiet) {
   if (quiet && o.firstElementChild) o.firstElementChild.style.animation = 'none';
   hydrate(o);
 }
-function closeOverlay() { $('#overlay').innerHTML = ''; confirmFn = null; }
+function closeOverlay() { $('#overlay').innerHTML = ''; confirmFn = null; UI.lic = null; }
 function ask(title, body, okLabel, fn, danger) { openOverlay(sheetConfirm(title, body, okLabel, danger)); confirmFn = fn; }
 let toastTimer = null, toastUndo = null;
 /* With undoFn the toast also holds an Undo button and stays 5 s; a new toast replaces the old one and its pending Undo. */
@@ -133,8 +136,138 @@ function syncNv() {
   if (f.elements.bring) UI.nv.bring = f.elements.bring.checked;
 }
 
+/* ---------- spreadsheet import ---------- */
+const IMP_ACCEPT = '.csv,.xlsx,.xls,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
+const IMP_READ_FAIL = 'This file could not be read. Save as CSV in Excel and import that.';
+function syncImpSheet() {
+  const st = UI.impSheet; if (!st) return;
+  ['name', 'site'].forEach(k => { const f = $('#overlay [data-impf="' + k + '"]'); if (f) st[k] = f.value; });
+}
+const impHasRows = sh => sh.rows.some(r => r.some(c => String(c).trim() !== ''));
+function impRecalc() {
+  const m = UI.imp, rows = impRows(m);
+  m.cols = matchColumns(rows[m.headerRow] || [], impData(m)); m.bareUnit = ''; m.items = null;
+}
+function impRender(focusSel) { render(); const f = focusSel && $(focusSel); if (f) f.focus({ preventScroll: true }); }
+async function importFile(f) {
+  const st = UI.impSheet; fileMode = null; if (!st) return;
+  try {
+    const res = await readSpreadsheet(new Uint8Array(await f.arrayBuffer()), f.name);
+    const first = res.sheets.findIndex(impHasRows);
+    if (first < 0) throw new Error(IMPORT_MSG.empty);
+    const target = st.mode === 'new' ? { newClient: { name: st.name.trim(), site: st.site.trim() } } : { clientId: st.clientId };
+    const c = st.mode === 'new' ? null : client(st.clientId);
+    UI.imp = { target, clientId: c ? c.id : '', clientName: c ? c.name : st.name.trim(), fileName: f.name, sheets: res.sheets, sheet: first, headerRow: 0, cols: [], bareUnit: '', items: null, filter: 'all' };
+    UI.imp.headerRow = findHeaderRow(impRows(UI.imp)); impRecalc();
+    UI.impSheet = null; closeOverlay(); go({ name: 'import', step: 'map' });
+  } catch (e) {
+    st.error = Object.values(IMPORT_MSG).includes(e && e.message) ? e.message : IMP_READ_FAIL;
+    openOverlay(sheetImport(), true);
+  }
+}
+/* in-place refresh of the review cards: no input is re-rendered, so focus stays where it is */
+function impRefresh() {
+  const m = UI.imp; if (!m || !m.items) return;
+  const sum = importSummary(m.items), cn = impCounts(m.items);
+  m.items.forEach((it, i) => {
+    const card = $('[data-card="' + i + '"]'); if (!card) return;
+    $('.imp-st', card).innerHTML = impBadge(it); $('.imp-rs', card).innerHTML = impReasons(it);
+    $('.imp-lbl', card).textContent = it.status === 'dup' ? 'Import anyway' : 'Import this item';
+    const cb = $('input[data-imp="on"]', card); if (cb.checked !== it.on) cb.checked = it.on;
+  });
+  const s = $('#impSum'); if (s) s.innerHTML = '<b>' + esc(sum.text) + '</b>';
+  [['all', 'All'], ['check', 'To check'], ['dup', 'Duplicates']].forEach(([f, l]) => { const b = $('.filter[data-f="' + f + '"]'); if (b) b.textContent = l + ' ' + cn[f]; });
+  const go = $('#impGo'); if (go) { go.textContent = impBtnLabel(sum.toImport); go.disabled = !sum.toImport; }
+}
+function impChange(el) {
+  const m = UI.imp, k = el.dataset.imp; if (!m) return;
+  if (k === 'sheet') { m.sheet = +el.value; m.headerRow = findHeaderRow(impRows(m)); impRecalc(); impRender('[data-imp="sheet"]'); return; }
+  if (k === 'head') { m.headerRow = +el.value; impRecalc(); impRender('[data-imp="head"]'); return; }
+  const i = +el.dataset.i;
+  if (k === 'col') {
+    const c = m.cols[i], t = el.value; if (!c) return;
+    c.target = t; m.items = null;
+    if (IMPORT_SINGLE.includes(t)) m.cols.forEach((o, j) => { if (j !== i && o.target === t) o.target = 'skip'; });
+    impRender('[data-imp="col"][data-i="' + i + '"]'); return;
+  }
+  if (!m.items || !m.items[i]) return;
+  const it = m.items[i];
+  if (k === 'on') { it.on = el.checked; impRefresh(); return; }
+  editImportItem(m.items, i, k, el.value, m.clientId);
+  if (k === 'type') {
+    const card = $('[data-card="' + i + '"]'); card.innerHTML = impCardInner(it, i);
+    const t = $('[data-imp="type"]', card); if (t) t.focus({ preventScroll: true });
+  } else if (k === 'wll') el.value = it.wll;
+  impRefresh();
+}
+
+/* ---------- licence: a key is checked on this device; nothing here ever disables a feature ---------- */
+const LIC_ACCEPT = '.txt,.taground-licence,text/plain';
+function licenceMsg(msg) { const e = $('#licErr'); if (UI.lic && e) e.textContent = msg; else toast(msg); }
+/* On the welcome screen nothing is redrawn (it would wipe what was typed); the business name is prefilled only when empty. */
+function licenceDone() {
+  const f = UI.route.name === 'welcome' ? $('form[data-form="welcome"] [name="company"]') : null;
+  if (f) { if (!f.value.trim() && licensed()) f.value = LIC.info.name; } else render();
+}
+async function licenceFlow(text) {
+  let r;
+  try { r = await applyLicenceText(text); } catch (e) { r = { result: 'bad' }; }
+  if (r.result === 'ok') { closeOverlay(); licenceDone(); toast('Licensed to ' + r.info.name + '.'); }
+  else if (r.result === 'renewed') { closeOverlay(); licenceDone(); toast('Licence renewed. Updates until ' + fmtDate(r.info.updatesUntil) + '.'); }
+  else if (r.result === 'same') { closeOverlay(); toast('This key is already in use.'); }
+  else if (r.result === 'noCrypto') licenceMsg(LIC_MSG.noCrypto);
+  else if (r.result === 'confirm') {
+    ask('Replace the licence?', 'The new key is for ' + r.info.name + ', updates until ' + fmtDate(r.info.updatesUntil) + '. The current key is for ' + r.current.name + ', updates until ' + fmtDate(r.current.updatesUntil) + '.', 'Replace key', () => {
+      storeLicence(r.key, r.info); licenceDone(); toast('Licensed to ' + r.info.name + '.');
+    });
+  } else licenceMsg(LIC_MSG.bad);
+}
+
 /* ---------- actions ---------- */
 const ACT = {
+  'imp-start'() {
+    UI.impSheet = { mode: S.clients.length ? 'existing' : 'new', clientId: S.clients.length === 1 ? S.clients[0].id : '', name: '', site: '', error: '' };
+    openOverlay(sheetImport());
+  },
+  'imp-mode'(el) { syncImpSheet(); UI.impSheet.mode = el.dataset.mode; UI.impSheet.error = ''; openOverlay(sheetImport(), true); },
+  'imp-client'(el) { UI.impSheet.clientId = el.dataset.id; UI.impSheet.error = ''; openOverlay(sheetImport(), true); },
+  'imp-file'() {
+    const st = UI.impSheet; if (!st) return; syncImpSheet();
+    if (st.mode === 'existing' ? !st.clientId : !st.name.trim()) return;
+    fileMode = 'import'; const f = $('#fileInput'); f.accept = IMP_ACCEPT; f.click();
+  },
+  'imp-unit'(el) { UI.imp.bareUnit = el.dataset.unit; UI.imp.items = null; impRender('[data-act="imp-unit"][data-unit="' + el.dataset.unit + '"]'); },
+  'imp-cancel'() { UI.imp = null; go({ name: 'register' }, { replace: true }); },
+  'imp-check'() {
+    const m = UI.imp; if (!m) return;
+    const data = impData(m), need = unitChoiceNeeded(m.cols, data);
+    if (m.cols.every(c => c.target === 'skip') || (need && !m.bareUnit)) return;
+    const items = buildImport({ rows: impRows(m), headerRow: m.headerRow, cols: m.cols, clientId: m.clientId, bareUnit: need ? m.bareUnit : '' });
+    if (!items.length) { toast('No items found under that heading row.'); return; }
+    m.items = items; m.filter = 'all'; go({ name: 'import', step: 'review' });
+  },
+  'imp-back'() { history.back(); },
+  'imp-filter'(el) {
+    const m = UI.imp; if (!m || !m.items) return; m.filter = el.dataset.f;
+    const cn = impCounts(m.items), g = $('.filters[aria-label="Show"]');
+    if (g) g.innerHTML = [['all', 'All'], ['check', 'To check'], ['dup', 'Duplicates']].map(([f, l]) => `<button class="filter" data-act="imp-filter" data-f="${f}" aria-pressed="${m.filter === f}">${l} ${cn[f]}</button>`).join('');
+    m.items.forEach((it, i) => { const c = $('[data-card="' + i + '"]'); if (c) c.hidden = !impIsOn(it, m.filter); });
+  },
+  'imp-commit'() {
+    const m = UI.imp; if (!m || !m.items || m.busy || !importSummary(m.items).toImport) return;
+    m.busy = true; const btn = $('#impGo'); if (btn) btn.disabled = true;
+    let r;
+    try { r = commitImport(m.items, m.target); } catch (e) { m.busy = false; if (btn) btn.disabled = false; toast(e.message || 'Nothing was imported.'); return; }
+    const name = m.target.newClient ? m.target.newClient.name : m.clientName;
+    UI.imp = null; UI.q = ''; go({ name: 'register' }, { replace: true });
+    toast('Imported ' + plural(r.count, 'item') + ' for ' + name + '.');
+  },
+
+  'licence-open'() { UI.lic = { text: '', error: '' }; openOverlay(sheetLicence(UI.lic)); const t = $('#licText'); if (t) t.focus(); },
+  'licence-use'() { const t = $('#licText'); if (t && t.value.trim()) licenceFlow(t.value); },
+  'licence-file'() { fileMode = 'licence'; const f = $('#fileInput'); f.accept = LIC_ACCEPT; f.click(); },
+  'lapse-ok'() { UI.lapseOk = true; render(); },
+
   nav(el) { go({ name: el.dataset.to }); },
   'open-visit'(el) { const v = visit(el.dataset.id); if (!v) return; UI.filter = 'all'; go(v.status === 'issued' ? { name: 'report', id: v.id } : { name: 'visit', id: v.id, panel: '' }); },
   'new-visit'() {
@@ -315,7 +448,7 @@ const ACT = {
   },
   erase() {
     ask('Erase everything?', 'All clients, items, visits, reports, photos and voice notes on this device are permanently deleted. This cannot be undone.', 'Erase everything', async () => {
-      Voice.stopPlay(); await DB.clear('photos'); await DB.clear('audio'); PH.clear(); S = blankState(); await saveNow(); go({ name: 'welcome' }, { replace: true });
+      Voice.stopPlay(); await DB.clear('photos'); await DB.clear('audio'); PH.clear(); S = blankState(); await saveNow(); await refreshLicence(); go({ name: 'welcome' }, { replace: true });
     }, true);
   },
   'close-overlay'() { closeOverlay(); },
@@ -369,7 +502,9 @@ function voiceInput(el) {
 const setPath = (obj, path, val) => { const ks = path.split('.'); const last = ks.pop(); ks.reduce((o, k) => o[k], obj)[last] = val; };
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.dataset.impf) { const st = UI.impSheet; if (!st) return; st[el.dataset.impf] = el.value; const b = $('#impFileBtn'); if (b && st.mode === 'new') b.disabled = !st.name.trim(); return; }
   if (el.dataset.voice) { voiceInput(el); return; }
+  if (el.id === 'licText') { if (UI.lic) { UI.lic.text = el.value; UI.lic.error = ''; } const g = $('#licGo'); if (g) g.disabled = !el.value.trim(); const e = $('#licErr'); if (e) e.textContent = ''; return; }
   if (el.id === 'reviseWhy') { const ok = $('#reviseOk'); if (ok) ok.disabled = !reasonOk(el.value); return; }
   if (el.id === 'regSearch') { UI.q = el.value; $('#regRows').innerHTML = regRows(UI.route); return; }
   if (el.name === 'date' && el.form && el.form.dataset.form === 'new-visit') { syncNv(); openOverlay(sheetNewVisit(), true); return; }
@@ -395,6 +530,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const el = e.target;
+  if (el.dataset.imp !== undefined) { impChange(el); return; }
   if (el.dataset.quarter !== undefined && el.tagName === 'SELECT') { S.settings.quarters[+el.dataset.quarter] = el.value; save(); render(); return; }
   if (el.dataset.retest !== undefined) { const i = curInsp(); if (i) { i.retest = el.checked; save(); } return; }
   if (el.dataset.bind === 'a:wll') { const a = curAsset(); if (a) { a.wll = el.value = normWll(el.value); save(); if (isWide()) renderList(); } return; }
@@ -402,6 +538,8 @@ document.addEventListener('change', e => {
   if (el.id === 'camInput' || el.id === 'pickInput') { const files = [...el.files]; el.value = ''; if (files.length && photoTarget) addPhotos(photoTarget, files); return; }
   if (el.id === 'fileInput') {
     const f = el.files[0]; el.value = ''; if (!f) return;
+    if (fileMode === 'import') { importFile(f); return; }
+    if (fileMode === 'licence') { fileMode = null; if (f.size > 100000) { licenceMsg(LIC_MSG.bad); return; } f.text().then(licenceFlow).catch(() => licenceMsg(LIC_MSG.bad)); return; }
     if (fileMode === 'logo') shrink(f, 640, 'image/png').then(u => { S.settings.company.logo = u; save(); render(); }).catch(() => toast('That file could not be read as an image.'));
     if (fileMode === 'restore') f.text().then(text => ask('Restore this backup?', 'Everything on this device is replaced with the contents of the backup file.', 'Restore', async () => {
       try { await applyBackup(text); go({ name: 'home' }, { replace: true }); toast('Backup restored.'); } catch (err) { toast(err.message || 'That backup could not be read.'); }
@@ -417,6 +555,7 @@ async function boot() {
   if (st && st.v) { S = Object.assign(blankState(), st); S.settings = Object.assign(blankState().settings, st.settings); }
   migrate(st && st.v ? st.settings : null);
   normVoice();
+  await refreshLicence().catch(() => {});   /* never blocks boot: a failed check just means evaluation mode */
   if (st && st.v) saveNow().catch(() => {});
   const route = S.settings.onboarded ? { name: 'home' } : { name: 'welcome' };
   UI.route = route; history.replaceState(route, '');
