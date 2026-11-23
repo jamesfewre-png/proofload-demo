@@ -448,3 +448,16 @@ textarea.input { min-height: 92px; resize: vertical; line-height: 1.4; }
 .lic-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .lapsebar { align-items: center; justify-content: space-between; margin: 0 0 14px; }
 .lapsebar .btn { flex: none; }
+
+/* 0.4.1 phone polish */
+/* Due list: on narrow phones the due badge drops under the ID so IDs and item types get the full width */
+@media (max-width: 479px) {
+  .row:has(> .badge.due), .row:has(> .badge.over) { grid-template-columns: 46px minmax(0, 1fr); row-gap: 4px; }
+  .row:has(> .badge.due) > .badge, .row:has(> .badge.over) > .badge { grid-column: 2; justify-self: start; }
+}
+/* Item screen: space between the result buttons (or defect chips) and the fields that follow */
+.section + .cols-3, .section + .cols { margin-top: 18px; }
+/* Narrow phones: paired fields stack so labels and placeholders are not cut off */
+@media (max-width: 419px) { .cols { grid-template-columns: 1fr; } }
+/* Visits header: keep the date on one line beside the tag chip */
+.page-head:has(.head-chips) .sub { white-space: nowrap; }

@@ -50,6 +50,20 @@ const DOC_CSS = `
 .doc-foot { margin-top:26px; padding-top:12px; border-top:1px solid var(--line); color:var(--ink2); font-size:11.5px; line-height:1.45; }
 @media (max-width:640px) { .doc { padding:22px 16px; } .doc-meta { grid-template-columns:1fr 1fr; } .doc-title .no { font-size:26px; }
   .doc table { font-size:12px; } .doc .col-opt { display:none; } .doc-sign { gap:16px; } }
+/* phones on screen: each register row becomes a card (ID and result on top, then labelled details). Print and PDF keep the table. */
+@media screen and (max-width:640px) {
+  .doc table, .doc tbody, .doc td { display:block; }
+  .doc thead { display:none; }
+  .doc tbody tr { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .doc tbody tr:first-child { border-top:1.5px solid var(--ink); }
+  .doc td { grid-column:1 / -1; border:0; padding:2px 0; font-size:13.5px; white-space:normal !important; }
+  .doc td:nth-child(1) { grid-column:1; font-size:16px; }
+  .doc td:nth-child(6) { grid-column:2; grid-row:1; text-align:right; font-size:13.5px; }
+  .doc td.col-opt { display:block; } .doc td:empty { display:none; }
+  .doc td:nth-child(3)::before { content:"WLL or capacity: "; } .doc td:nth-child(4)::before { content:"Kept at: "; }
+  .doc td:nth-child(5)::before { content:"Standard: "; } .doc td:nth-child(7)::before { content:"Next due: "; }
+  .doc td:nth-child(n+3)::before { color:var(--ink2); font-family:system-ui,sans-serif; font-stretch:100%; }
+}
 `;
 
 const reportNo = v => v.reportNo + (v.rev ? ' Rev ' + v.rev : '');
