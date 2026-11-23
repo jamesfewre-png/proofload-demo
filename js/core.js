@@ -1,7 +1,7 @@
 'use strict';
 /* TagRound core: constants, storage, state, helpers. No network calls anywhere in this app. */
 
-const APP = { name: 'TagRound', version: '0.3.1' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
+const APP = { name: 'TagRound', version: '0.3.2' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
 
 const TAGS = {
   red:    { name: 'Red',    hex: '#D7332A', on: '#FFFFFF' },
@@ -135,9 +135,48 @@ function blankState() {
 let S = blankState();
 const PH = new Map();           /* photo cache: id -> data URL */
 let saveTimer = null;
+/* ---------- signature integrity: a signature confirms the findings as shown, so any later change to them voids it ---------- */
+/* Small deterministic string hash (cyrb53, base36). An integrity check against accidental change, not security. */
+function hashStr(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let k = 0; k < str.length; k++) { const c = str.charCodeAt(k); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+/* Everything the printed report states about the findings. Voice drafts, lastPassed, company, client and settings are left out. */
+function findingsPayload(v) {
+  return { date: v.date, tag: v.tag, scope: v.scope || '', items: visitInsps(v.id).map(i => { const a = asset(i.assetId) || {}; return [i.id, a.id, a.type, a.ident, a.desc, a.wll, a.wllUnit, a.make, a.certNo || '', a.location, a.std, i.result, i.defects, i.actions || [], !!i.retest, i.notes, i.photos, i.nextDue]; }) };
+}
+/* The client rep name voids only the client signature; the inspector name voids only the inspector signature. */
+const sigKey = (v, who) => hashStr(JSON.stringify([findingsPayload(v), who, who === 'inspector' ? String(v.inspector || '') : String(v.clientRep || '')]));
+function signVisit(v, who, data) {
+  if (!v || v.status !== 'open' || sigLock(v)) return false;
+  if (who === 'inspector') { v.signInspector = data; v.signInspectorKey = sigKey(v, 'inspector'); }
+  else { v.signClient = data; v.signClientKey = sigKey(v, 'client'); }
+  return true;
+}
+/* Open visits only. A signature with no key (older data) adopts the current findings; a key that no longer matches clears the signature. Returns how many were cleared. */
+function voidStaleSigs() {
+  let n = 0;
+  S.visits.forEach(v => {
+    if (v.status !== 'open') return;
+    [['inspector', 'signInspector', 'signInspectorKey'], ['client', 'signClient', 'signClientKey']].forEach(([who, sf, kf]) => {
+      if (!v[sf]) return;
+      if (!v[kf]) v[kf] = sigKey(v, who);
+      else if (v[kf] !== sigKey(v, who)) { v[sf] = ''; v[kf] = ''; n++; }
+    });
+  });
+  return n;
+}
+const SIG_VOID_MSG = 'Findings changed after signing. Sign again.';
+/* The one hook: every change goes through save(), so signatures are checked here. True when any signature was cleared. */
 function save() {
+  const voided = voidStaleSigs() > 0;
+  if (voided) toast(SIG_VOID_MSG);
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { DB.put('kv', 'state', S).catch(() => toast('Could not save. Storage may be full.')); }, 120);
+  return voided;
 }
 function saveNow() { clearTimeout(saveTimer); return DB.put('kv', 'state', S); }
 
@@ -222,7 +261,7 @@ const wllName = t => t.cap ? 'rated capacity' : 'working load limit';
 const openVisitFor = cid => S.visits.find(v => v.clientId === cid && v.status === 'open');
 
 /* The readiness gate. A report cannot be issued while any 'block' entry exists. */
-function gate(v) {
+function gateFindings(v) {
   const out = [];
   const L = visitInsps(v.id);
   if (!S.settings.company.name.trim()) out.push({ kind: 'block', text: 'Add your business name so it appears on the report', nav: 'settings' });
@@ -231,7 +270,7 @@ function gate(v) {
   if (!L.length) out.push({ kind: 'block', text: 'Add at least one item to this visit' });
   L.forEach(i => {
     const a = asset(i.assetId), t = typeOf(a), label = itemLabel(a);
-    if (!i.result) out.push({ kind: 'block', text: label + ' has no result', fix: 'add a result', item: i.id });
+    if (!i.result) out.push({ kind: 'block', text: label + ' has no result', fix: 'add a result', item: i.id, noResult: true });
     if (!a.ident.trim()) out.push({ kind: 'block', text: t.name + ' has no ID or serial number', fix: 'add an ID', item: i.id });
     if (t.wll && !String(a.wll).trim() && i.result && i.result !== 'missing') out.push({ kind: 'block', text: label + ' has no ' + wllName(t), fix: 'add the ' + wllName(t), item: i.id });
     if (t.wll && String(a.wll).trim() && !wllIsNumber(a.wll) && i.result && i.result !== 'missing') out.push({ kind: 'block', text: label + ' has a ' + wllName(t) + ' that is not a number', fix: 'enter the ' + wllName(t) + ' as a number', item: i.id });
@@ -250,9 +289,28 @@ function gate(v) {
   });
   if (!String(v.inspector || '').trim()) out.push({ kind: 'block', text: 'Inspector name is missing', focus: 'inspectorInput' });
   if (!String(v.inspectorQuals || '').trim()) out.push({ kind: 'advise', text: "Add the inspector's competency so the report shows it", focus: 'qualsInput' });
-  if (!v.signInspector) out.push({ kind: 'block', text: 'Inspector signature is missing', sign: 'inspector' });
-  if (!v.signClient) out.push({ kind: 'advise', text: 'No client signature yet. You can still issue the report.', sign: 'client' });
   return out;
+}
+/* The full readiness gate: the findings, then the two signature lines. While the findings are unfinished the signature lines carry no
+   'sign' target, so tapping them does nothing. */
+function gate(v) {
+  const out = gateFindings(v), lock = sigLock(v);
+  if (!v.signInspector) out.push(lock ? { kind: 'block', text: 'Inspector signature: after the inspection is finished' } : { kind: 'block', text: 'Inspector signature is missing', sign: 'inspector' });
+  if (!v.signClient) { const g = { kind: 'advise', text: 'No client signature yet. You can still issue the report.' }; if (!lock) g.sign = 'client'; out.push(g); }
+  return out;
+}
+/* null when signing is allowed; otherwise what is left to do before the inspector can sign. */
+function sigLock(v) {
+  const blocks = gateFindings(v).filter(x => x.kind === 'block');
+  if (!blocks.length) return null;
+  const L = visitInsps(v.id);
+  const toInspect = L.filter(i => !i.result).length;
+  const toFix = groupGate(blocks.filter(x => !x.noResult)).length;
+  if (!L.length) return { toInspect, toFix, text: 'Add the first item before signing.' };
+  const parts = [];
+  if (toInspect > 0) parts.push(`${toInspect} to inspect`);
+  if (toFix > 0) parts.push(`${toFix} to fix`);
+  return { toInspect, toFix, text: 'Finish the inspection first: ' + parts.join(', ') + '.' };
 }
 
 /* One readiness line per item: several problems on one item merge into a single line. */
@@ -425,6 +483,8 @@ function migrate(rawSettings) {
     /* the old report printed the competency only when the visit's inspector was the Settings inspector */
     if (v.inspectorQuals === undefined) v.inspectorQuals = (st.inspector && v.inspector === st.inspector.name) ? (st.inspector.quals || '') : '';
   });
+  /* signatures taken before 0.3.2 carry no key: fix them to the findings as they stand now */
+  S.visits.forEach(v => { if (v.status === 'open') { if (v.signInspector && !v.signInspectorKey) v.signInspectorKey = sigKey(v, 'inspector'); if (v.signClient && !v.signClientKey) v.signClientKey = sigKey(v, 'client'); } });
   /* 2. freeze reports issued before snapshots existed, from the data as it stands now */
   S.visits.forEach(v => {
     if (v.status === 'issued' && !v.snapshot) { v.snapshot = makeSnapshot(v); v.snapshot.migrated = true; }

@@ -25,6 +25,7 @@ function renderList() {
 function refreshGate() {
   const box = $('#gateBox'), v = curVisit(); if (!box || !v) return;
   box.innerHTML = gateBox(v);
+  const si = $('#signBoxInspector'), sc = $('#signBoxClient'); if (si) si.innerHTML = signBox(v, 'inspector'); if (sc) sc.innerHTML = signBox(v, 'client');
   const btn = $('#issueBtn'); if (btn) { btn.disabled = gate(v).some(x => x.kind === 'block'); btn.innerHTML = issueLabelHTML(v); }
 }
 function hydrate(root = document) {
@@ -155,8 +156,8 @@ const ACT = {
   'quick-pass'(el) {
     const i = insp(el.dataset.id); if (!i) return;
     const a = asset(i.assetId), undo = resultUndo(i);
-    setResult(i, 'pass'); save(); render();
-    toast('Passed ' + (a.ident.trim() || typeOf(a).name) + '.', () => { if (undo()) { save(); render(); } });
+    setResult(i, 'pass'); const voided = save(); render();
+    toast('Passed ' + (a.ident.trim() || typeOf(a).name) + '.' + (voided ? ' ' + SIG_VOID_MSG : ''), () => { if (undo()) { save(); render(); } });
   },
   'toast-undo'() { const fn = toastUndo; hideToast(); if (fn) fn(); },
   'set-result'(el) {
@@ -241,12 +242,12 @@ const ACT = {
     else if (g.panel) setPanel(g.panel);
     else if (g.focus) { const f = document.getElementById(g.focus); if (f) f.focus(); }
   },
-  sign(el) { openOverlay(sheetSign(el.dataset.who)); initSigPad(); },
+  sign(el) { const v = curVisit(); if (!v || v.status !== 'open' || sigLock(v)) return; openOverlay(sheetSign(el.dataset.who)); initSigPad(); },
   'sig-clear'() { initSigPad(); },
   'sig-save'(el) {
     if (!sigDirty) { toast('Sign in the box first.'); return; }
     const v = curVisit(), data = $('#sigpad').toDataURL('image/png');
-    if (el.dataset.who === 'inspector') v.signInspector = data; else v.signClient = data;
+    if (!signVisit(v, el.dataset.who, data)) { closeOverlay(); render(); return; }
     closeOverlay(); save(); render();
   },
   issue() {

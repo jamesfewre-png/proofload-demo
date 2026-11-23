@@ -337,8 +337,11 @@ function gateBox(v) {
     ${g.length ? `<ul class="gate" style="margin-top:10px">${g.map((x, idx) => li(x, idx)).join('')}</ul>` : ''}`;
 }
 function signBox(v, who) {
-  const data = who === 'inspector' ? v.signInspector : v.signClient;
-  return `<button class="signbox ${data ? 'done' : ''}" data-act="sign" data-who="${who}">${data ? `<img src="${data}" alt="Signature">` : `<span style="display:flex;gap:8px;align-items:center">${ic('pen', 20)}Tap to sign</span>`}</button>`;
+  const data = who === 'inspector' ? v.signInspector : v.signClient, lock = sigLock(v);
+  if (data && lock) return `<div class="signbox done" aria-disabled="true"><img src="${data}" alt="Signature"></div>`;
+  if (data) return `<button class="signbox done" data-act="sign" data-who="${who}"><img src="${data}" alt="Signature"></button>`;
+  if (lock) return `<div class="signbox locked" aria-disabled="true"><span style="display:flex;gap:8px;align-items:center">${ic('clock', 20)}${esc(lock.text)}</span></div>`;
+  return `<button class="signbox" data-act="sign" data-who="${who}"><span style="display:flex;gap:8px;align-items:center">${ic('pen', 20)}Tap to sign</span></button>`;
 }
 /* "Issue report", or "Issue report (3 to fix)" while the readiness list still has blocking lines */
 /* as HTML for the button: the bracketed count never splits across lines */
@@ -355,9 +358,9 @@ function issuePanel(v) {
       <div class="section"><span class="label">Sign-off</span>
         ${field('Inspector', 'v:inspector', v.inspector, 'id="inspectorInput" autocomplete="name"')}
         ${field('Inspector competency', 'v:inspectorQuals', v.inspectorQuals || '', 'id="qualsInput" autocomplete="off"')}
-        ${signBox(v, 'inspector')}
+        <div id="signBoxInspector">${signBox(v, 'inspector')}</div>
         ${field('Client representative, if on site', 'v:clientRep', v.clientRep, 'autocomplete="off"')}
-        ${signBox(v, 'client')}
+        <div id="signBoxClient">${signBox(v, 'client')}</div>
       </div>
       <div class="section"><span class="label">This visit</span>
         <div class="tallybox"><div><b>${n.pass}</b>Pass</div><div><b>${n.action}</b>Action</div><div><b>${n.missing}</b>Not presented</div><div><b>${n.todo}</b>To do</div></div>

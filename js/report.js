@@ -94,7 +94,7 @@ function reviseVisit(v, reason) {
   if (!reasonOk(reason)) return false;
   if (!Array.isArray(v.revisions)) v.revisions = [];
   v.revisions.push({ rev: v.rev || 0, reportNo: reportNo(v), issuedAt: v.issuedAt, snapshot: v.snapshot || makeSnapshot(v) });
-  v.revReason = String(reason).trim(); v.snapshot = null; v.signInspector = ''; v.signClient = ''; v.status = 'open';
+  v.revReason = String(reason).trim(); v.snapshot = null; v.signInspector = ''; v.signClient = ''; v.signInspectorKey = ''; v.signClientKey = ''; v.status = 'open';
   return true;
 }
 
