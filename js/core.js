@@ -1,7 +1,7 @@
 'use strict';
 /* TagRound core: constants, storage, state, helpers. No network calls anywhere in this app. */
 
-const APP = { name: 'TagRound', version: '0.4.1' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
+const APP = { name: 'TagRound', version: '0.4.2' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
 
 const TAGS = {
   red:    { name: 'Red',    hex: '#D7332A', on: '#FFFFFF' },
@@ -417,6 +417,29 @@ function newVisit(clientId, date, tag, bringForward) {
   S.visits.unshift(v);
   if (bringForward) S.assets.filter(a => a.clientId === clientId && !a.retired).forEach(a => newInsp(v.id, a.id));
   return v;
+}
+/* Bring register items into an open visit. Callers save(). Issued visits are never touched. */
+function registerMissing(v) {
+  if (!v || v.status !== 'open') return [];
+  const on = new Set(visitInsps(v.id).map(i => i.assetId));
+  return S.assets.filter(a => a.clientId === v.clientId && !a.retired && !on.has(a.id));
+}
+function bringIn(v, assetIds) {
+  if (!v || v.status !== 'open') return [];
+  const ok = new Set(registerMissing(v).map(a => a.id)), out = [];
+  (assetIds || []).forEach(id => { if (ok.has(id)) { ok.delete(id); out.push(newInsp(v.id, id)); } });
+  return out;
+}
+function commitImportToVisit(items, target, visitId) {
+  const before = new Set(S.assets.map(a => a.id));
+  const r = commitImport(items, target);
+  const v = visit(visitId);
+  r.added = 0;
+  if (v) {
+    r.added = bringIn(v, S.assets.filter(a => !before.has(a.id)).map(a => a.id)).length;
+    if (r.added > 0) r.voided = save();
+  }
+  return r;
 }
 function setResult(i, result) {
   const v = visit(i.visitId), a = asset(i.assetId), was = i.result;

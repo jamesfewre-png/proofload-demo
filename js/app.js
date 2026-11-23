@@ -157,7 +157,7 @@ async function importFile(f) {
     if (first < 0) throw new Error(IMPORT_MSG.empty);
     const target = st.mode === 'new' ? { newClient: { name: st.name.trim(), site: st.site.trim() } } : { clientId: st.clientId };
     const c = st.mode === 'new' ? null : client(st.clientId);
-    UI.imp = { target, clientId: c ? c.id : '', clientName: c ? c.name : st.name.trim(), fileName: f.name, sheets: res.sheets, sheet: first, headerRow: 0, cols: [], bareUnit: '', items: null, filter: 'all' };
+    UI.imp = { target, clientId: c ? c.id : '', clientName: c ? c.name : st.name.trim(), visitId: st.visitId || '', fileName: f.name, sheets: res.sheets, sheet: first, headerRow: 0, cols: [], bareUnit: '', items: null, filter: 'all' };
     UI.imp.headerRow = findHeaderRow(impRows(UI.imp)); impRecalc();
     UI.impSheet = null; closeOverlay(); go({ name: 'import', step: 'map' });
   } catch (e) {
@@ -237,7 +237,11 @@ const ACT = {
     fileMode = 'import'; const f = $('#fileInput'); f.accept = IMP_ACCEPT; f.click();
   },
   'imp-unit'(el) { UI.imp.bareUnit = el.dataset.unit; UI.imp.items = null; impRender('[data-act="imp-unit"][data-unit="' + el.dataset.unit + '"]'); },
-  'imp-cancel'() { UI.imp = null; go({ name: 'register' }, { replace: true }); },
+  'imp-cancel'() {
+    const vid = UI.imp && UI.imp.visitId; UI.imp = null;
+    if (vid && visit(vid)) go({ name: 'visit', id: vid, panel: '' }, { replace: true });
+    else go({ name: 'register' }, { replace: true });
+  },
   'imp-check'() {
     const m = UI.imp; if (!m) return;
     const data = impData(m), need = unitChoiceNeeded(m.cols, data);
@@ -257,7 +261,12 @@ const ACT = {
     const m = UI.imp; if (!m || !m.items || m.busy || !importSummary(m.items).toImport) return;
     m.busy = true; const btn = $('#impGo'); if (btn) btn.disabled = true;
     let r;
-    try { r = commitImport(m.items, m.target); } catch (e) { m.busy = false; if (btn) btn.disabled = false; toast(e.message || 'Nothing was imported.'); return; }
+    try { r = m.visitId ? commitImportToVisit(m.items, m.target, m.visitId) : commitImport(m.items, m.target); } catch (e) { m.busy = false; if (btn) btn.disabled = false; toast(e.message || 'Nothing was imported.'); return; }
+    if (m.visitId && r.added > 0) {
+      UI.imp = null; UI.filter = 'all'; go({ name: 'visit', id: m.visitId, panel: '' }, { replace: true });
+      toast('Imported ' + plural(r.added, 'item') + ' and added them to this visit.' + (r.voided ? ' ' + SIG_VOID_MSG : ''));
+      return;
+    }
     const name = m.target.newClient ? m.target.newClient.name : m.clientName;
     UI.imp = null; UI.q = ''; go({ name: 'register' }, { replace: true });
     toast('Imported ' + plural(r.count, 'item') + ' for ' + name + '.');
@@ -284,6 +293,21 @@ const ACT = {
   'pick-type'(el) {
     const v = curVisit(), a = newAsset(v.clientId, el.dataset.type), i = newInsp(v.id, a.id);
     UI.filter = 'all'; save(); setPanel('item', i.id); focusIdent();
+  },
+  'imp-visit'() {
+    const v = curVisit(); if (!v || v.status !== 'open') return;
+    UI.impSheet = { mode: 'existing', clientId: v.clientId, visitId: v.id, name: '', site: '', error: '' };
+    openOverlay(sheetImport());
+  },
+  'bring-all'() {
+    const v = curVisit(), added = v ? bringIn(v, registerMissing(v).map(a => a.id)) : []; if (!added.length) return;
+    UI.filter = 'all'; const voided = save();
+    if (UI.route.panel === 'pick') setPanel(''); else render();
+    toast('Added ' + plural(added.length, 'item') + ' from the register.' + (voided ? ' ' + SIG_VOID_MSG : ''));
+  },
+  'bring-one'(el) {
+    const v = curVisit(), [i] = v ? bringIn(v, [el.dataset.id]) : []; if (!i) return;
+    UI.filter = 'all'; save(); setPanel('item', i.id);
   },
   'open-item'(el) { setPanel('item', el.dataset.id); },
   'quick-pass'(el) {
@@ -506,6 +530,7 @@ document.addEventListener('input', e => {
   if (el.dataset.voice) { voiceInput(el); return; }
   if (el.id === 'licText') { if (UI.lic) { UI.lic.text = el.value; UI.lic.error = ''; } const g = $('#licGo'); if (g) g.disabled = !el.value.trim(); const e = $('#licErr'); if (e) e.textContent = ''; return; }
   if (el.id === 'reviseWhy') { const ok = $('#reviseOk'); if (ok) ok.disabled = !reasonOk(el.value); return; }
+  if (el.id === 'pickSearch') { const q = el.value.trim().toLowerCase(); document.querySelectorAll('[data-act="bring-one"]').forEach(r => { r.hidden = !!q && !(r.dataset.q || '').includes(q); }); return; }
   if (el.id === 'regSearch') { UI.q = el.value; $('#regRows').innerHTML = regRows(UI.route); return; }
   if (el.name === 'date' && el.form && el.form.dataset.form === 'new-visit') { syncNv(); openOverlay(sheetNewVisit(), true); return; }
   if (el.dataset.typeStd) { const id = el.dataset.typeStd; S.settings.types[id] = { ...(S.settings.types[id] || {}), std: el.value }; save(); return; }

@@ -195,6 +195,13 @@ function itemRow(i, r) {
     ${i.result ? badge(i.result) : `<button class="quick" data-act="quick-pass" data-id="${i.id}" aria-label="Pass ${esc(itemLabel(a))}">${ic('check', 26, 2.6)}</button>`}
   </div>`;
 }
+function emptyVisit(v) {
+  const n = registerMissing(v).length;
+  return `<div class="empty" style="margin-top:8px"><b>No items on this visit yet</b>
+    ${n ? `<button class="btn btn-primary btn-block btn-wrap" type="button" data-act="bring-all" style="margin-top:12px">Bring in the ${plural(n, 'item')} on this client's register</button>` : ''}
+    <button class="btn btn-secondary btn-block" type="button" data-act="imp-visit" style="margin-top:${n ? 10 : 12}px">${ic('table')}Import items from a spreadsheet</button>
+    <span style="display:block;margin-top:12px">Add the first piece of gear. After that, "Add another like this" makes short work of a rack of identical items.</span></div>`;
+}
 function visitList(v, r) {
   const c = client(v.clientId), n = counts(v.id), L = visitInsps(v.id), f = UI.filter;
   const shown = L.filter(i => f === 'all' || (f === 'todo' && !i.result) || (f === 'action' && (i.result === 'fail' || i.result === 'repair')));
@@ -210,6 +217,7 @@ function visitList(v, r) {
     <div class="pane-body" data-scroll="vlist">
       ${shown.length ? '<div class="rows">' + shown.map(i => itemRow(i, r)).join('') + '</div>'
         : L.length ? '<div class="banner note" style="margin-top:8px">Nothing in this view.</div>'
+        : v.status === 'open' ? emptyVisit(v)
         : '<div class="empty" style="margin-top:8px"><b>No items on this visit yet</b>Add the first piece of gear. After that, "Add another like this" makes short work of a rack of identical items.</div>'}
     </div>
     <div class="pane-foot">
@@ -222,7 +230,22 @@ function visitList(v, r) {
 function typeGrid(act, current) {
   return `<div class="typegrid">${TYPES.map(t => `<button class="typebtn" data-act="${act}" data-type="${t.id}" aria-pressed="${current === t.id}"><span class="glyph">${glyph(t.id, 24)}</span>${t.name}</button>`).join('')}</div>`;
 }
-function pickPanel() {
+function pickPanel(v) {
+  const L = (v ? registerMissing(v) : []).sort((a, b) => (!a.ident - !b.ident) || a.ident.localeCompare(b.ident));
+  if (L.length) {
+    const rows = L.map(a => `<div class="row" role="button" tabindex="0" data-act="bring-one" data-id="${a.id}" data-q="${esc([a.ident, typeOf(a).name, a.desc].join(' ').toLowerCase())}">
+      <span class="glyph">${glyph(a.type)}</span>
+      <span class="grow"><span class="row-id ${a.ident ? '' : 'none'}" style="display:block">${esc(a.ident) || 'No ID yet'}</span><span class="row-sub" style="display:block">${esc(itemSub(a))}</span></span>
+      ${ic('plus')}</div>`).join('');
+    return `<div class="pane-head"><div class="bar">${backBtn()}<div class="grow"><div class="title sm">What are you adding?</div></div></div></div>
+    <div class="pane-body" data-scroll="pick">
+      <div class="section" style="margin-top:4px"><span class="label">From this client's register</span>
+        ${L.length > 1 ? `<button class="btn btn-primary btn-block" type="button" data-act="bring-all" style="margin-bottom:10px">Bring in all ${L.length}</button>` : ''}
+        ${L.length > 8 ? `<input class="input" type="search" id="pickSearch" placeholder="Search ID or type" aria-label="Search this client's register" style="margin-bottom:10px">` : ''}
+        <div class="rows">${rows}</div></div>
+      <div class="section"><span class="label">New gear</span>${typeGrid('pick-type', '')}</div>
+    </div>`;
+  }
   return `<div class="pane-head"><div class="bar">${backBtn()}<div class="grow"><div class="title sm">What are you adding?</div></div></div></div>
     <div class="pane-body" data-scroll="pick">${typeGrid('pick-type', '')}</div>`;
 }
@@ -399,7 +422,7 @@ const isWide = () => window.matchMedia('(min-width: 760px)').matches;
 function visitDetail(v, r) {
   const panel = r.panel || (isWide() ? 'issue' : '');
   if (panel === 'item') { const i = insp(r.itemId); if (i) return itemPanel(v, i); }
-  if (panel === 'pick') return pickPanel();
+  if (panel === 'pick') return pickPanel(v);
   if (panel === 'details') return detailsPanel(v);
   if (panel === 'issue' || panel === 'item') return issuePanel(v);
   return '';
@@ -643,8 +666,9 @@ function sheetImport() {
   return `<div class="sheet" role="dialog" aria-label="Import items from a spreadsheet">
     <div class="sheet-head"><h3>Import items from a spreadsheet</h3><button class="btn btn-quiet btn-icon" type="button" data-act="close-overlay" aria-label="Close">${ic('x')}</button></div>
     <div class="sheet-body">
-      ${have ? `<div class="unit" style="margin-bottom:14px"><button type="button" data-act="imp-mode" data-mode="existing" aria-pressed="${st.mode === 'existing'}">Existing client</button><button type="button" data-act="imp-mode" data-mode="new" aria-pressed="${st.mode === 'new'}">New client</button></div>` : ''}
-      ${st.mode === 'existing' ? pickList : `
+      ${st.visitId ? `<p style="margin:0 0 14px">These items go on ${esc((client(st.clientId) || {}).name || 'this client')}'s register and onto this visit.</p>` : ''}
+      ${have && !st.visitId ? `<div class="unit" style="margin-bottom:14px"><button type="button" data-act="imp-mode" data-mode="existing" aria-pressed="${st.mode === 'existing'}">Existing client</button><button type="button" data-act="imp-mode" data-mode="new" aria-pressed="${st.mode === 'new'}">New client</button></div>` : ''}
+      ${st.visitId ? '' : st.mode === 'existing' ? pickList : `
         <label class="field"><span>Client</span><input class="input" data-impf="name" value="${esc(st.name)}" autocomplete="off"></label>
         <label class="field"><span>Site</span><input class="input" data-impf="site" value="${esc(st.site)}" autocomplete="off" placeholder="Workshop, 12 Example Rd, Welshpool"></label>`}
       <p class="small muted">CSV or Excel (.xlsx). The file is read on this device and never leaves it.</p>
