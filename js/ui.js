@@ -575,9 +575,9 @@ function licenceCard() {
   const row = (k, v) => `<div class="qrow"><span class="muted">${k}</span><b style="text-align:right">${esc(v)}</b></div>`;
   const foot = `<p class="small muted" style="margin:12px 0 0">Licences and renewals: ${esc(SELLER.name)}. ${esc(SELLER.contact)}.</p>`;
   if (ok) return `<div class="card" id="licCard"><h3>Licence</h3>
-      <div style="margin-top:6px">${row('Licensed to', i.name)}${row('Seats', String(i.seats))}${row('Issued', fmtDate(i.issued))}${row('Updates until', fmtDate(i.updatesUntil))}</div>
+      <div style="margin-top:6px">${row('Licensed to', i.name)}${row('Issued', fmtDate(i.issued))}${row('Updates until', fmtDate(i.updatesUntil))}</div>
       ${licenceLapsed() ? `<div class="banner note" style="margin-top:10px">${esc(lapseText())}</div>` : ''}
-      <p class="small muted" style="margin:10px 0 12px">Seats is the number of inspectors the licence covers. It is not checked by the app.</p>
+      <p class="small muted" style="margin:10px 0 12px">Covers any number of inspectors and devices in this business.</p>
       <div class="btn-row"><button class="btn btn-secondary" data-act="licence-open">Replace key</button><button class="btn btn-secondary" data-act="licence-file">Import key file</button></div>${foot}</div>`;
   const problem = LIC.status === 'invalid' ? LIC_MSG.bad : LIC.status === 'unchecked' ? LIC_MSG.noCrypto : '';
   return `<div class="card" id="licCard"><h3 class="lic-title">Licence ${evalChip()}</h3>
