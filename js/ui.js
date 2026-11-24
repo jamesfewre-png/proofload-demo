@@ -1,7 +1,7 @@
 'use strict';
 /* TagRound UI: icons, small components and every screen as a template function. */
 
-const UI = { route: { name: 'home' }, filter: 'all', q: '', typeOpen: false, nv: null, justIssued: false, imp: null, impSheet: null, lic: null, lapseOk: false };
+const UI = { route: { name: 'home' }, filter: 'all', q: '', typeOpen: false, nv: null, justIssued: false, imp: null, merge: null, impSheet: null, lic: null, lapseOk: false };
 
 /* ---------- icons ---------- */
 const ICONS = {
@@ -90,7 +90,7 @@ const evalBtn = () => licensed() ? '' : '<button class="evalbtn" type="button" d
 /* ---------- navigation chrome ---------- */
 function navItems(r) {
   const dl = dueAssets(), due = dl.length, over = dl.filter(d => d.days < 0).length;
-  const cur = (r.name === 'visit' || r.name === 'report') ? 'home' : r.name === 'import' ? 'register' : r.name;
+  const cur = (r.name === 'visit' || r.name === 'report') ? 'home' : r.name === 'import' ? 'register' : r.name === 'merge' ? 'settings' : r.name;
   return [['home', 'Visits', 'clipboard'], ['register', 'Register', 'list'], ['due', 'Due', 'clock'], ['settings', 'Settings', 'sliders']]
     .map(([n, l, i]) => `<button class="tab" data-act="nav" data-to="${n}" ${cur === n ? 'aria-current="page"' : ''}${n === 'due' && due ? ` aria-label="Due, ${due} due within 30 days${over ? ', ' + over + ' overdue' : ''}"` : ''}>${ic(i, 24)}<span>${l}</span>${n === 'due' && due ? `<span class="dot${over ? ' over' : ''}">${due}</span>` : ''}</button>`).join('');
 }
@@ -100,7 +100,7 @@ const tabbar = r => `<nav class="tabbar" aria-label="Main">${navItems(r)}</nav>`
 function shell(r) {
   if (r.name === 'welcome') return viewWelcome();
   const top = ['home', 'register', 'due', 'settings'].includes(r.name) && !(r.name === 'register' && r.assetId);
-  const body = r.name === 'visit' ? viewVisit(r) : r.name === 'report' ? viewReport(r) : r.name === 'register' ? viewRegister(r) : r.name === 'import' ? viewImport(r)
+  const body = r.name === 'visit' ? viewVisit(r) : r.name === 'report' ? viewReport(r) : r.name === 'register' ? viewRegister(r) : r.name === 'import' ? viewImport(r) : r.name === 'merge' ? viewMerge()
     : r.name === 'due' ? viewDue() : r.name === 'settings' ? viewSettings() : viewHome();
   return `<div class="shell ${top ? 'is-top' : ''}">${rail(r)}<main class="stage">${body}</main>${tabbar(r)}</div>`;
 }
@@ -611,6 +611,7 @@ function viewSettings() {
       <div class="card"><h3>Reports</h3><p>Numbering and the wording at the foot of each report.</p>
         <div class="cols">${field('Report number prefix', 's:prefix', s.prefix, 'autocomplete="off"')}${field('Next number', 's:nextNo', s.nextNo, 'inputmode="numeric" autocomplete="off"')}</div>
         <div id="nextNoWarn" aria-live="polite">${nextNoWarnHTML()}</div>
+        <p class="small muted">If more than one device issues reports, give each its own prefix, for example LR-A and LR-B, so report numbers never clash.</p>
         ${area('Statement at the foot of the report', 's:disclaimer', s.disclaimer, 'style="min-height:150px"')}
         <label class="check"><input type="checkbox" data-toggle="photoEveryItem" ${s.photoEveryItem ? 'checked' : ''}><span>Require a photo of every item, not only failed ones</span></label>
       </div>
@@ -620,10 +621,48 @@ function viewSettings() {
       </div>
       <div class="card" style="grid-column:1/-1"><h3>Your data</h3><p>Records live in this browser on this device. Save a backup file regularly and keep it somewhere safe, such as your email or a USB stick. A backup holds everything, photos included.</p>
         <p>${backupLine()}</p>
-        <div class="btn-row"><button class="btn btn-primary" data-act="backup">${ic('download')}Save a backup file</button><button class="btn btn-secondary" data-act="restore">Restore from a backup</button></div>
+        <div class="btn-row"><button class="btn btn-primary" data-act="backup">${ic('download')}Save a backup file</button><button class="btn btn-secondary" data-act="restore">Restore from a backup</button><button class="btn btn-secondary" data-act="merge">Add records from another device</button></div>
         <div class="btn-row" style="margin-top:10px"><button class="btn btn-secondary" data-act="load-demo">Load sample data</button><button class="btn btn-danger" data-act="erase">Erase everything</button></div>
+        <p class="small muted" style="margin-top:10px">Using more than one phone or tablet? Each one keeps its own records. To bring two devices level, save a backup on the first and add it on the second with Add records from another device. Then save a backup on the second and add or restore it on the first.</p>
       </div>
     </div></div></div>`;
+}
+
+/* ---------- add records from another device: preview ---------- */
+function mergeParts(add) {
+  return joinAnd([[add.clients, 'client'], [add.assets, 'item'], [add.visits, 'visit'], [add.inspections, 'result'], [add.photos, 'photo'], [add.audio, 'voice recording']]
+    .filter(x => x[0] > 0).map(x => plural(x[0], x[1])));
+}
+function viewMerge() {
+  const m = UI.merge, p = m.plan, src = p.source;
+  const cap = (arr, fn) => arr.slice(0, 20).map(fn).join('') + (arr.length > 20 ? `<li class="muted">and ${arr.length - 20} more</li>` : '');
+  const card = (title, arr, fn) => arr.length ? `<div class="card"><h3>${title}</h3><ul class="small" style="margin:6px 0 0;padding-left:18px">${cap(arr, fn)}</ul></div>` : '';
+  const dl = x => `<li><b>${esc(x.label)}</b>${x.detail ? '. ' + esc(x.detail) : ''}</li>`;
+  const when = src.exportedAt ? new Date(src.exportedAt) : null, who = src.inspector || src.company;
+  const sub = esc(m.fileName) + (when && !isNaN(when) ? ', saved ' + fmtDate(toISO(when)) : '') + (who ? ', by ' + esc(who) : '');
+  const parts = mergeParts(p.add), nothing = !p.changes && !p.nextNo;
+  const sum = parts ? 'Adds ' + parts + '.' : p.changes ? 'Updates records already on this device.' : nothing ? 'Nothing new to add. Everything in this file is already on this device.' : '';
+  const clash = p.reportNoClashes.length || p.samePrefix;
+  const pre = p.nextNo ? p.nextNo.prefix : (S.settings.prefix || 'LR');
+  const reportCard = (clash || p.nextNo) ? `<div class="card"><h3>Report numbers</h3><ul class="small" style="margin:6px 0 0;padding-left:18px">
+      ${cap(p.reportNoClashes, c => `<li>${esc(c.reportNo)} is used here by ${esc(c.here)} and on the other device by ${esc(c.incoming)}. Neither report is renumbered.</li>`)}
+      ${clash ? `<li>Both devices number reports with ${esc(pre)}. Give each device its own prefix in Settings, under Reports, for example ${esc(pre)}-A and ${esc(pre)}-B, so numbers never clash.</li>` : ''}
+      ${p.nextNo ? `<li>The next report number here moves from ${esc(fmtReportNo(p.nextNo.prefix, p.nextNo.from))} to ${esc(fmtReportNo(p.nextNo.prefix, p.nextNo.to))}.</li>` : ''}</ul></div>` : '';
+  return `<div class="page"><header class="page-head"><div><h1>Check before adding records</h1><p class="sub">${sub}</p></div></header>
+    <div class="page-body" data-scroll="merge"><div class="wrap imp-wrap">
+      <div class="banner note" style="margin-bottom:10px">${ic('download', 22)}<div>Nothing on this device is deleted. Save a backup of this device first, so you can go back if you need to.<div style="margin-top:8px"><button class="btn btn-secondary" data-act="backup">${ic('download')}Save a backup file</button></div></div></div>
+      ${p.differentBusiness ? `<div class="banner stop" style="margin-bottom:10px">${ic('alert', 22)}<div>This file is from ${esc(src.company)}, not ${esc(S.settings.company.name || 'this business')}. Check it is the right file before adding it.</div></div>` : ''}
+      ${sum ? `<p class="imp-sum" aria-live="polite"><b>${esc(sum)}</b></p>` : ''}
+      ${card('Matched to records already here', p.matched.clients.map(c => ({ c })).concat(p.matched.assets.map(a => ({ a }))), x => x.c ? `<li>${esc(x.c.name)} matches ${esc(x.c.localName)}</li>` : `<li>${esc(x.a.label)}, ${esc(x.a.client)}</li>`)}
+      ${card('Updated from the other device', p.updated, dl)}
+      ${card('Details filled in', p.filled, dl)}
+      ${card('Kept as they are on this device', p.kept, dl)}
+      ${card('Added separately', p.duplicates, dl)}
+      ${card('Not added', p.heldBack, dl)}
+      ${reportCard}
+      ${p.openVisitsPerClient.length ? `<div class="card"><ul class="small" style="margin:0;padding-left:18px">${cap(p.openVisitsPerClient, o => `<li>${esc(o.client)} will have ${plural(o.count, 'visit')} in progress.</li>`)}</ul></div>` : ''}
+    </div></div>
+    <div class="imp-foot"><div class="wrap imp-wrap"><div class="btn-row"><button class="btn btn-secondary" data-act="merge-cancel">Cancel</button><button class="btn btn-primary" id="mergeGo" data-act="merge-go" ${nothing || m.busy ? 'disabled' : ''}>${nothing ? 'Nothing new to add' : 'Add these records'}</button></div></div></div></div>`;
 }
 
 /* ---------- overlay content ---------- */

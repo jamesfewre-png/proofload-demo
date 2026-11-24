@@ -236,9 +236,17 @@ async function makeBackup() {
   }
   return JSON.stringify({ app: 'proofload', version: APP.version, exportedAt: new Date().toISOString(), state: S, photos: Object.fromEntries(map), audio });
 }
+/* Reads and checks a backup file's text. The same check and message serve restore and merge. */
+const MG_BAD = 'This is not a TagRound backup file.';
+function mgCheck(data) { if (!data || data.app !== 'proofload' || !data.state || !Array.isArray(data.state.visits)) throw new Error(MG_BAD); }
+function parseBackup(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { throw new Error(MG_BAD); }
+  mgCheck(data);
+  return data;
+}
 async function applyBackup(text) {
-  const data = JSON.parse(text);
-  if (!data || data.app !== 'proofload' || !data.state || !Array.isArray(data.state.visits)) throw new Error('This is not a TagRound backup file.');
+  const data = parseBackup(text);
   Voice.stopPlay();
   await refreshLicence();
   const deviceKey = licensed() ? S.settings.licence : '';
@@ -255,6 +263,275 @@ async function applyBackup(text) {
   if (deviceKey && (LIC.status === 'none' || LIC.status === 'invalid')) { S.settings.licence = deviceKey; await refreshLicence(); }
   await saveNow();
   Voice.kick();
+}
+
+/* ---------- merge: add another device's records to this device without losing anything (0.4.4) ----------
+   Nothing on this device is deleted. Every difference shows up in kept, heldBack, duplicates, filled or updated. Issued reports are copied
+   intact, never altered or renumbered. Merging the same file twice changes nothing the second time. Settings stay this device's.
+   Pure apart from applyMerge's commit step: planMerge never touches S, the database or the file's data. */
+const mgClone = x => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
+function mgSort(x) {
+  if (Array.isArray(x)) return x.map(mgSort);
+  if (x && typeof x === 'object') { const o = {}; Object.keys(x).sort().forEach(k => { if (x[k] !== undefined) o[k] = mgSort(x[k]); }); return o; }
+  return x;
+}
+const mgStable = x => JSON.stringify(mgSort(x));                                  /* equality that ignores key order */
+const mgBlank = s => s == null || String(s).trim() === '';
+const mgNorm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+const MG_NAMES = { name: 'Name', site: 'Site', contact: 'Contact', email: 'Email', phone: 'Phone', type: 'Type', ident: 'ID', desc: 'Description', wll: 'WLL', wllUnit: 'WLL unit', make: 'Make', certNo: 'Certificate number', location: 'Kept at', std: 'Standard', clientId: 'Client' };
+const MG_ASSET_FILL = ['ident', 'desc', 'wll', 'make', 'certNo', 'location', 'std'];   /* the WLL unit comes with the WLL */
+const MG_VISIT_WORDS = { date: 'date', tag: 'tag colour', scope: 'scope', inspector: 'inspector', inspectorQuals: 'competency', clientRep: 'client rep', signInspector: 'inspector signature', signClient: 'client signature',
+  signInspectorKey: 'inspector signature', signClientKey: 'client signature', reportNo: 'report number', status: 'status', rev: 'revision', revisions: 'earlier versions', snapshot: 'issued report', issuedAt: 'issue date', revReason: 'revision reason', clientId: 'client' };
+const MG_SIG_HELD = 'Signed on the other device, but this device has different details for one of its items. Issue the report on the other device first, then add records again.';
+const mgBaseNo = no => String(no || '').replace(/ Rev \d+$/, '');
+
+/* The other device's state, normalised on its own the way a restore does, then S put back. S is swapped for the copy only for that moment. */
+function mgIncoming(data) {
+  mgCheck(data);
+  const keep = S;
+  try {
+    const st = mgClone(data.state);
+    S = Object.assign(blankState(), st);
+    S.settings = Object.assign(blankState().settings, st.settings);
+    ['clients', 'assets', 'visits', 'inspections'].forEach(k => { if (!Array.isArray(S[k])) S[k] = []; });
+    migrate(mgClone(data.state.settings));
+    normVoice();
+    return S;
+  } finally { S = keep; }
+}
+/* Open visits whose signature the next save() would clear if the state were these arrays. Does not change anything. Returns visit ids. */
+function mgVoided(M) {
+  const keep = S, out = [];
+  try {
+    S = Object.assign({}, keep, { clients: M.clients, assets: M.assets, visits: M.visits, inspections: M.inspections });
+    M.visits.forEach(v => {
+      if (v.status !== 'open') return;
+      if ((v.signInspector && v.signInspectorKey && v.signInspectorKey !== sigKey(v, 'inspector')) || (v.signClient && v.signClientKey && v.signClientKey !== sigKey(v, 'client'))) out.push(v.id);
+    });
+  } finally { S = keep; }
+  return out;
+}
+const mgSigned = v => v.status === 'open' && !!(v.signInspector || v.signClient);
+/* A copy of visit a for comparing with b. Old files get a fresh migrated snapshot (new takenAt) each time they are normalised, so when both are migrated takenAt is left out. Stored data is not changed. */
+function mgCmpVisit(a, b) {
+  const c = mgClone(a);
+  if (c.snapshot && b.snapshot && c.snapshot.migrated === true && b.snapshot.migrated === true) delete c.snapshot.takenAt;
+  return c;
+}
+const mgGroup = list => { const m = new Map(); list.forEach(x => { if (!m.has(x.visitId)) m.set(x.visitId, []); m.get(x.visitId).push(x); }); return m; };
+
+/* One full pass. L is this device's state (read only), I the other device's, held a Map of incoming visit ids to hold back. */
+function mgBuild(L, I, held) {
+  const kept = [], heldBack = [], duplicates = [], updated = [], filled = [], matched = { clients: [], assets: [] };
+  const quote = s => '"' + s + '"';
+
+  /* 1. clients: same id, else same name; this device's details win, blanks are filled in */
+  const clients = L.clients.map(mgClone), localClient = new Map(L.clients.map(c => [c.id, c])), cmap = new Map();
+  let clientsAdded = 0;
+  I.clients.forEach(ic => {
+    let src = localClient.get(ic.id), byName = false;
+    if (!src && !mgBlank(ic.name)) { src = L.clients.find(c => mgNorm(c.name) === mgNorm(ic.name)); byName = !!src; }
+    if (!src) { cmap.set(ic.id, ic.id); clients.push(mgClone(ic)); clientsAdded++; return; }
+    cmap.set(ic.id, src.id);
+    if (byName) matched.clients.push({ name: ic.name, localName: src.name });
+    const t = clients.find(c => c.id === src.id), before = mgStable(t), got = [], diff = [];
+    Object.keys(ic).forEach(k => {
+      if (k === 'id') return;
+      if (mgBlank(t[k]) && !mgBlank(ic[k])) { t[k] = mgClone(ic[k]); got.push(MG_NAMES[k] || k); }
+      else if (!mgBlank(ic[k]) && (k === 'name' ? mgNorm(t[k]) !== mgNorm(ic[k]) : mgStable(t[k]) !== mgStable(ic[k]))) diff.push(`${MG_NAMES[k] || k} is ${quote(String(t[k]))} here and ${quote(String(ic[k]))} on the other device`);
+    });
+    if (mgStable(t) !== before) filled.push({ label: 'Client ' + t.name, detail: 'Blank details filled in from the other device: ' + got.join(', ') + '.' });
+    if (diff.length) kept.push({ label: 'Client ' + t.name, detail: diff.join('; ') + ". Kept this device's details." });
+  });
+  const cname = id => (clients.find(c => c.id === id) || {}).name || 'unknown client';
+  const mappedClient = id => cmap.has(id) ? cmap.get(id) : id;
+
+  /* 2. assets. A signed open visit, here or there, must keep exactly the findings it was signed on. */
+  const incByVisit = mgGroup(I.inspections), locByVisit = mgGroup(L.inspections);
+  const refsInc = new Set(), refsHeld = new Set(), guardBlock = new Set(), signedRef = new Set(), toMerge = [];
+  I.visits.forEach(v => (incByVisit.get(v.id) || []).forEach(i => { (held.has(v.id) ? refsHeld : refsInc).add(i.assetId); if (!held.has(v.id) && mgSigned(v)) guardBlock.add(i.assetId); }));
+  const skipAsset = id => refsHeld.has(id) && !refsInc.has(id);   /* only a held-back visit used it */
+  const assets = L.assets.map(mgClone), localAsset = new Map(L.assets.map(a => [a.id, a])), amap = new Map(), absorbed = new Set();
+  let assetsAdded = 0;
+  const aBase = a => typeById(a.type).name + ' ' + (String(a.ident || '').trim() || 'with no ID');
+  const aLabel = (a, cid) => aBase(a) + ', ' + cname(cid === undefined ? a.clientId : cid);
+  const showVal = (k, v) => k === 'type' ? typeById(v).name : k === 'clientId' ? cname(v) : String(v == null ? '' : v);
+  const mergeAsset = (t, ia, cid) => {   /* runs after the visits are settled: signedRef is then exactly the items signed open visits in the result use */
+    const before = mgStable(t), got = [], diff = [], blocked = signedRef.has(t.id);
+    Object.keys(ia).forEach(k => {
+      if (['id', 'retired', 'createdAt', 'wllUnit'].includes(k)) return;
+      const iv = k === 'clientId' ? cid : ia[k];
+      if (MG_ASSET_FILL.includes(k) && mgBlank(t[k]) && !mgBlank(iv)) {
+        if (blocked) { diff.push(`${MG_NAMES[k] || k} is blank here and ${quote(String(iv))} on the other device (left blank because a signed visit in progress uses this item)`); return; }
+        t[k] = mgClone(iv); got.push(MG_NAMES[k] || k);
+        if (k === 'wll' && !mgBlank(ia.wllUnit)) t.wllUnit = ia.wllUnit;
+      } else if (!mgBlank(iv) && mgStable(t[k]) !== mgStable(iv)) diff.push(`${MG_NAMES[k] || k} is ${quote(showVal(k, t[k]))} here and ${quote(showVal(k, iv))} on the other device`);
+    });
+    if (!got.includes('WLL') && !mgBlank(t.wll) && !mgBlank(ia.wll) && !mgBlank(ia.wllUnit) && mgStable(t.wllUnit) !== mgStable(ia.wllUnit)) diff.push(`WLL unit is ${quote(String(t.wllUnit))} here and ${quote(String(ia.wllUnit))} on the other device`);
+    const notes = [];
+    if (got.length) notes.push('Blank details filled in from the other device: ' + got.join(', '));
+    if (ia.retired && !t.retired) { t.retired = true; notes.push('Marked retired because the other device has it retired or destroyed'); }
+    if (!mgBlank(ia.createdAt) && (mgBlank(t.createdAt) || ia.createdAt < t.createdAt)) { t.createdAt = ia.createdAt; notes.push('Earlier first-recorded date kept'); }
+    if (mgStable(t) !== before) filled.push({ label: aLabel(t), detail: notes.join('. ') + '.' });
+    if (diff.length) kept.push({ label: aLabel(t), detail: diff.join('; ') + ". Kept this device's details." });
+  };
+  const pending = [];
+  I.assets.forEach(ia => {    /* same id first, so an ID match can never take an item that another item of the file owns by id */
+    if (skipAsset(ia.id)) return;
+    const cid = mappedClient(ia.clientId), loc = localAsset.get(ia.id);
+    if (!loc) { pending.push([ia, cid]); return; }
+    amap.set(ia.id, loc.id); absorbed.add(loc.id);
+    toMerge.push([assets.find(a => a.id === loc.id), ia, cid]);
+  });
+  pending.forEach(([ia, cid]) => {
+    let cand = null, taken = null;
+    if (!mgBlank(ia.ident)) {
+      const m = L.assets.filter(a => a.clientId === cid && a.type === ia.type && mgNorm(a.ident) === mgNorm(ia.ident)), free = m.filter(a => !absorbed.has(a.id));
+      cand = free.find(a => !a.retired) || free[0] || null;
+      if (!cand) taken = m.find(a => !a.retired) || m[0] || null;
+    }
+    const addSeparately = () => { amap.set(ia.id, ia.id); const c = mgClone(ia); c.clientId = cid; assets.push(c); assetsAdded++; };
+    if (cand && guardBlock.has(ia.id)) {
+      addSeparately();
+      duplicates.push({ label: aLabel(ia, cid), detail: 'Looks like ' + aLabel(cand) + '; kept separate because a signed visit in progress uses it.' });
+    } else if (cand) {
+      amap.set(ia.id, cand.id); absorbed.add(cand.id);
+      matched.assets.push({ label: aBase(ia), client: cname(cid) });
+      toMerge.push([assets.find(a => a.id === cand.id), ia, cid]);
+    } else {
+      addSeparately();
+      if (taken) duplicates.push({ label: aLabel(ia, cid), detail: 'Looks like ' + aLabel(taken) + '; added separately because that item already matches another item from the other device.' });
+    }
+  });
+  const assetIds = new Set(assets.map(a => a.id));
+
+  /* 3 and 4. visits and their inspections */
+  const vLabel = v => 'Visit ' + fmtDate(v.date) + ', ' + cname(v.clientId) + (v.reportNo ? ', report ' + reportNo(v) : '');
+  const iLabel = (i, v) => { const a = assets.find(x => x.id === i.assetId); return (a ? aBase(a) : 'An item') + ' on the visit of ' + fmtDate(v.date) + ', ' + cname(v.clientId); };
+  const localInsp = new Map(L.inspections.map(i => [i.id, i])), lvMap = new Map(L.visits.map(v => [v.id, v]));
+  const newVisits = [], replaced = new Map(), accepted = new Map(), fromIncoming = new Set(), incCopies = new Map(), incVisitIds = new Set(I.visits.map(v => v.id));
+  I.visits.forEach(iv0 => {
+    const iv = mgClone(iv0); iv.clientId = mappedClient(iv.clientId);
+    if (held.has(iv0.id)) { heldBack.push({ label: vLabel(iv), detail: held.get(iv0.id) }); return; }
+    const list = (incByVisit.get(iv.id) || []).map(i => { const c = mgClone(i); if (amap.has(c.assetId)) c.assetId = amap.get(c.assetId); incCopies.set(i.id, c); return c; });
+    const lv = lvMap.get(iv.id), lins = lv ? (locByVisit.get(lv.id) || []) : [];
+    let mode = 'new';
+    if (lv) {
+      const cmpL = mgCmpVisit(lv, iv), cmpI = mgCmpVisit(iv, lv);   /* copies; old-format snapshots are compared without their takenAt */
+      if (mgStable([cmpL, lins]) === mgStable([cmpI, list])) return;
+      const li = lv.status === 'issued', ii = iv.status === 'issued', lr = lv.rev || 0, ir = iv.rev || 0;
+      const words = [...new Set(Object.keys(MG_VISIT_WORDS).filter(k => mgStable(cmpL[k]) !== mgStable(cmpI[k])).map(k => MG_VISIT_WORDS[k]))];
+      if (mgStable(lins) !== mgStable(list)) words.push('results');
+      const differs = words.length ? 'Differs in ' + words.join(', ') + '. ' : '';
+      let win = null, why = '';
+      if (li !== ii) { win = ii ? 'incoming' : 'local'; why = ii ? 'Issued on the other device, still open here.' : 'Issued here, still open on the other device.'; }
+      else if (lr !== ir) { win = ir > lr ? 'incoming' : 'local'; why = ir > lr ? `The other device has the newer version (Rev ${ir}; this device has Rev ${lr}).` : `This device has the newer version (Rev ${lr}; the other device has Rev ${ir}).`; }
+      else why = (ii ? 'Issued' : 'Open') + ' on both devices with different details.';
+      const notAdded = list.length ? ` The other device's copy has ${plural(list.length, 'result')} not added.` : '';
+      if (win === 'incoming' && !li && !ii && mgSigned(lv)) { kept.push({ label: vLabel(lv), detail: differs + `The other device has a newer version (Rev ${ir}; this device has Rev ${lr}), but this device's copy is signed, so it was kept. Finish and issue the report on one device, then add records again.` + notAdded }); return; }
+      if (win !== 'incoming') { kept.push({ label: vLabel(lv), detail: differs + why + " Kept this device's copy." + notAdded }); return; }
+      const incIds = new Set(list.map(i => i.id));
+      if (!lins.every(i => incIds.has(i.id))) { kept.push({ label: vLabel(lv), detail: differs + `Changed on both devices; this device's copy kept; the other device's copy has ${plural(list.length, 'result')} not added.` }); return; }
+      if (list.some(i => { const o = localInsp.get(i.id); return (o && o.visitId !== iv.id) || !assetIds.has(i.assetId); })) { kept.push({ label: vLabel(lv), detail: differs + "Some results in the other device's copy cannot be added, so this device's copy was kept." }); return; }
+      mode = 'replace';
+      const lost = [['signInspector', 'inspector'], ['signClient', 'client']].filter(([k]) => lv[k] && !iv[k]).map(([, w]) => w);   /* only reachable when an issued copy replaces an open one: said out loud */
+      updated.push({ label: vLabel(iv), detail: differs + why + " The other device's copy replaces this device's copy." + (lost.length ? ` This device's copy had the ${lost.join(' and ')} signature, which the other device's copy does not carry.` : '') });
+    }
+    /* results that cannot be added are held back with the reason */
+    const ok = list.filter(i => {
+      const o = localInsp.get(i.id);
+      if (o && o.visitId !== iv.id) { heldBack.push({ label: iLabel(i, iv), detail: 'This result has the same reference as one on a different visit on this device, so it was not added. Check which device has the right record, then add records again.' }); return false; }
+      if (!assetIds.has(i.assetId)) { heldBack.push({ label: iLabel(i, iv), detail: "The item this result is for is not in the other device's backup, so it was not added. Make a fresh backup on the other device and add records again." }); return false; }
+      return true;
+    });
+    accepted.set(iv.id, ok); fromIncoming.add(iv.id);
+    if (mode === 'replace') replaced.set(iv.id, iv); else newVisits.push(iv);
+  });
+  I.inspections.forEach(i => { if (!incVisitIds.has(i.visitId)) heldBack.push({ label: 'A result for ' + (assets.find(a => a.id === (amap.get(i.assetId) || i.assetId)) ? aBase(assets.find(a => a.id === (amap.get(i.assetId) || i.assetId))) : 'an unknown item'), detail: "Its visit is not in the other device's backup, so it was not added." }); });
+
+  /* the items that signed open visits in the result use keep their details exactly: no blank is filled in on them */
+  L.visits.forEach(v => { if (!replaced.has(v.id) && mgSigned(v)) (locByVisit.get(v.id) || []).forEach(i => signedRef.add(i.assetId)); });
+  accepted.forEach((list, id) => { const v = replaced.get(id) || newVisits.find(x => x.id === id); if (v && mgSigned(v)) list.forEach(i => signedRef.add(i.assetId)); });
+  toMerge.forEach(([t, ia, cid]) => mergeAsset(t, ia, cid));
+
+  /* New visits go to the front of the visit list, in the other device's order, like a freshly started visit (the home screen lists open visits in list order
+     and issued visits by date). A replaced visit keeps its place. This device's visits are never moved. */
+  const visits = newVisits.concat(L.visits.map(v => replaced.get(v.id) || mgClone(v)));
+  /* a replaced visit's results are removed and the other device's appended in its order; new visits' results are appended in the other device's order */
+  const inspections = L.inspections.filter(i => !replaced.has(i.visitId)).map(mgClone);
+  let inspectionsAdded = 0;
+  I.inspections.forEach(i => { const c = incCopies.get(i.id); if (c && accepted.has(c.visitId) && accepted.get(c.visitId).includes(c)) { inspections.push(c); if (!localInsp.has(c.id)) inspectionsAdded++; } });
+
+  return { merged: { clients, assets, visits, inspections }, kept, heldBack, duplicates, updated, filled, matched, fromIncoming, vLabel,
+    add: { clients: clientsAdded, assets: assetsAdded, visits: newVisits.length, inspections: inspectionsAdded } };
+}
+
+/* What a merge would do, without doing it. Reads S and the file's data; changes neither, nor the database. */
+async function planMerge(data) {
+  const I = mgIncoming(data), held = new Map();
+  let r;
+  for (let n = 0; n <= I.visits.length + 1; n++) {     /* signature safety net: hold back any incoming visit whose signature would not survive, until stable */
+    r = mgBuild(S, I, held);
+    const bad = mgVoided(r.merged).filter(id => r.fromIncoming.has(id));
+    if (!bad.length) break;
+    bad.forEach(id => held.set(id, MG_SIG_HELD));
+  }
+  const M = r.merged;
+  /* report numbers: a clash is two different visits holding the same number; nothing is ever renumbered */
+  const byNo = new Map(), incIds = new Set(I.visits.map(v => v.id));
+  M.visits.forEach(v => [v.reportNo].concat((v.revisions || []).map(x => x.reportNo)).forEach(no => {
+    const b = mgBaseNo(no); if (!b) return;
+    if (!byNo.has(b)) byNo.set(b, []);
+    if (!byNo.get(b).includes(v)) byNo.get(b).push(v);
+  }));
+  const reportNoClashes = [];
+  byNo.forEach((vs, no) => {
+    for (let a = 0; a < vs.length; a++) for (let b = a + 1; b < vs.length; b++) {
+      const inc = incIds.has(vs[b].id) ? vs[b] : vs[a], here = inc === vs[b] ? vs[a] : vs[b];
+      if (incIds.has(inc.id)) reportNoClashes.push({ reportNo: no, here: r.vLabel(here), incoming: r.vLabel(inc) });
+    }
+  });
+  const prefix = reportNoPrefix(), pre = prefix + '-', from = parseInt(S.settings.nextNo, 10) || 1;
+  let max = 0;
+  byNo.forEach((vs, no) => { if (no.startsWith(pre) && /^\d+$/.test(no.slice(pre.length))) max = Math.max(max, parseInt(no.slice(pre.length), 10)); });
+  const nextNo = max + 1 > from ? { prefix, from, to: max + 1 } : null;
+  const incHasNo = I.visits.some(v => v.reportNo || (v.revisions || []).some(x => x.reportNo));
+  /* photos and voice recordings the merged records use that the file holds and this device does not */
+  const wantP = new Set(), wantA = new Set();
+  M.inspections.forEach(i => { (i.photos || []).forEach(p => wantP.add(p)); (i.voice || []).forEach(n => { if (n.audioId) wantA.add(n.audioId); }); });
+  M.visits.forEach(v => snapshotPhotoIds(v).forEach(p => wantP.add(p)));
+  const has = (o, id) => !!o && Object.prototype.hasOwnProperty.call(o, id) && o[id] != null;
+  const photoIds = [], audioIds = [];
+  for (const id of wantP) if (has(data.photos, id) && (await DB.get('photos', id)) == null) photoIds.push(id);
+  for (const id of wantA) if (has(data.audio, id) && (await DB.get('audio', id)) == null) audioIds.push(id);
+  const openN = new Map();
+  M.visits.forEach(v => { if (v.status === 'open') openN.set(v.clientId, (openN.get(v.clientId) || 0) + 1); });
+  const openVisitsPerClient = M.clients.filter(c => openN.get(c.id) > 1).map(c => ({ client: c.name, count: openN.get(c.id) }));
+  const add = Object.assign({}, r.add, { photos: photoIds.length, audio: audioIds.length });
+  const co = x => mgNorm(x && x.name);
+  return {
+    source: { exportedAt: data.exportedAt || '', version: data.version || '', company: I.settings.company.name || '', inspector: I.settings.inspector.name || '', prefix: I.settings.prefix },
+    differentBusiness: !!co(I.settings.company) && !!co(S.settings.company) && co(I.settings.company) !== co(S.settings.company),
+    add, matched: r.matched, updated: r.updated, filled: r.filled, kept: r.kept, heldBack: r.heldBack, duplicates: r.duplicates,
+    reportNoClashes, samePrefix: (I.settings.prefix || 'LR') === prefix && incHasNo, nextNo, openVisitsPerClient,
+    changes: add.clients + add.assets + add.visits + add.inspections + add.photos + add.audio + r.updated.length + r.filled.length,
+    merged: M, photoIds, audioIds
+  };
+}
+
+/* Does the merge. Recomputes the plan against the current S; refuses (changing nothing) if any signature on a visit in progress would be cleared. */
+async function applyMerge(data) {
+  const plan = await planMerge(data);
+  if (!plan.changes && !plan.nextNo) return plan;
+  if (mgVoided(plan.merged).length) throw new Error('Nothing was added. A signature on a visit in progress would have been cleared, so this device was left as it was. Make a fresh backup on the other device and try again.');
+  for (const id of plan.photoIds) await DB.put('photos', id, data.photos[id]);
+  for (const id of plan.audioIds) await DB.put('audio', id, { mime: data.audio[id].mime, buf: b64dec(data.audio[id].b64) });
+  S.clients = mgClone(plan.merged.clients); S.assets = mgClone(plan.merged.assets); S.visits = mgClone(plan.merged.visits); S.inspections = mgClone(plan.merged.inspections);
+  if (plan.nextNo) S.settings.nextNo = plan.nextNo.to;
+  normVoice();
+  await saveNow();
+  Voice.kick();
+  return plan;
 }
 
 /* ---------- sample data, for looking around and for showing the app to someone ---------- */

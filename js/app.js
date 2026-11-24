@@ -8,6 +8,8 @@ function render() {
   const r2 = routeFor(r); if (r2 !== r) r = UI.route = r2;
   /* the import session lives only while its screens are showing; a reload or a step back past the end lands on the register */
   if (r.name !== 'import' && UI.imp) UI.imp = null;
+  if (r.name !== 'merge' && UI.merge) UI.merge = null;
+  if (r.name === 'merge' && !UI.merge) { r = UI.route = { name: 'settings' }; history.replaceState(r, ''); }
   if (r.name === 'import' && (!UI.imp || (r.step === 'review' && !UI.imp.items))) { r = UI.route = UI.imp ? { name: 'import', step: 'map' } : { name: 'register' }; history.replaceState(r, ''); }
   /* a recording in progress is saved, not lost, if the screen moves away from its item */
   if (Voice.rec && !(r.name === 'visit' && r.panel === 'item' && r.itemId === Voice.rec.inspId)) Voice.stopRec();
@@ -465,6 +467,20 @@ const ACT = {
     toast('Backup saved. Keep it somewhere safe.');
   },
   restore() { fileMode = 'restore'; const f = $('#fileInput'); f.accept = '.json,application/json'; f.click(); },
+  merge() { fileMode = 'merge'; const f = $('#fileInput'); f.accept = '.json,application/json'; f.click(); },
+  'merge-cancel'() { go({ name: 'settings' }, { replace: true }); },
+  async 'merge-go'(el) {
+    const m = UI.merge; if (!m || m.busy) return;
+    m.busy = true; if (el) el.disabled = true;
+    try {
+      const plan = await applyMerge(m.data), parts = mergeParts(plan.add);
+      UI.merge = null; go({ name: 'home' }, { replace: true });
+      toast(parts ? 'Records added: ' + parts + '.' : 'Records updated.');
+    } catch (err) {
+      m.busy = false; if (el) el.disabled = false;
+      toast(err.message || 'That backup could not be read.');
+    }
+  },
   'load-demo'() {
     const run = async () => { await buildDemo(); UI.filter = 'all'; go({ name: 'home' }, { replace: true }); toast('Sample data loaded.'); };
     if (S.visits.length || S.assets.length) ask('Replace your records with sample data?', 'Everything recorded on this device is replaced. Save a backup first if you need to keep it.', 'Replace with sample data', run, true);
@@ -566,6 +582,13 @@ document.addEventListener('change', e => {
     if (fileMode === 'import') { importFile(f); return; }
     if (fileMode === 'licence') { fileMode = null; if (f.size > 100000) { licenceMsg(LIC_MSG.bad); return; } f.text().then(licenceFlow).catch(() => licenceMsg(LIC_MSG.bad)); return; }
     if (fileMode === 'logo') shrink(f, 640, 'image/png').then(u => { S.settings.company.logo = u; save(); render(); }).catch(() => toast('That file could not be read as an image.'));
+    if (fileMode === 'merge') {
+      f.text().then(async text => {
+        const data = parseBackup(text), plan = await planMerge(data);
+        UI.merge = { data, plan, fileName: f.name, busy: false }; go({ name: 'merge' });
+      }).catch(err => toast(err.message || 'That backup could not be read.'));
+      return;
+    }
     if (fileMode === 'restore') f.text().then(text => ask('Restore this backup?', 'Everything on this device is replaced with the contents of the backup file.', 'Restore', async () => {
       try { await applyBackup(text); go({ name: 'home' }, { replace: true }); toast('Backup restored.'); } catch (err) { toast(err.message || 'That backup could not be read.'); }
     }, true));
