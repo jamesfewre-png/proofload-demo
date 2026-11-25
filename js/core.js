@@ -1,7 +1,7 @@
 'use strict';
 /* TagRound core: constants, storage, state, helpers. No network calls anywhere in this app. */
 
-const APP = { name: 'TagRound', version: '0.4.4' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
+const APP = { name: 'TagRound', version: '0.4.5' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
 
 const TAGS = {
   red:    { name: 'Red',    hex: '#D7332A', on: '#FFFFFF' },

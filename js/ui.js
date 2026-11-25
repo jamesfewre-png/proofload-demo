@@ -482,16 +482,38 @@ function regRows(r) {
     if (!q) return true;
     const c = client(a.clientId);
     return [a.ident, typeOf(a).name, a.desc, a.location, a.make, a.certNo, c && c.name].join(' ').toLowerCase().includes(q);
-  }).sort((a, b) => (a.retired - b.retired) || (client(a.clientId).name.localeCompare(client(b.clientId).name)) || a.ident.localeCompare(b.ident));
+  }).sort((a, b) => (client(a.clientId).name.localeCompare(client(b.clientId).name)) || (a.clientId || '').localeCompare(b.clientId || '') || (a.retired - b.retired) || a.ident.localeCompare(b.ident));
   if (!L.length) return `<div class="empty"><b>${S.assets.length ? 'No matches' : 'The register is empty'}</b>${S.assets.length ? 'Try a different ID, type or client.' : 'Items you inspect on a visit are added here automatically.'}</div>`;
-  return '<div class="rows">' + L.map(a => {
+  /* Grouped under a heading per client once the register holds more than one client's gear;
+     a business keeping only its own register sees a plain list. */
+  const grouped = new Set(S.assets.map(a => a.clientId)).size > 1;
+  const row = a => {
     const l = lastInsp(a.id);
     const right = a.retired ? '<span class="badge missing">Retired</span>' : l ? badge(l.i.result) : '<span class="badge todo">Not inspected</span>';
-    return `<div class="row" role="button" tabindex="0" data-act="open-asset" data-id="${a.id}" ${r.assetId === a.id ? 'aria-current="true"' : ''}>
+    return `<div class="row ${a.retired ? 'is-retired' : ''}" role="button" tabindex="0" data-act="open-asset" data-id="${a.id}" ${r.assetId === a.id ? 'aria-current="true"' : ''}>
       <span class="glyph">${glyph(a.type)}</span>
-      <span class="grow"><span class="row-id ${a.ident ? '' : 'none'}" style="display:block">${esc(a.ident) || 'No ID yet'}</span><span class="row-sub" style="display:block">${esc(typeOf(a).name)}, ${esc(client(a.clientId).name)}</span></span>
+      <span class="grow"><span class="row-id ${a.ident ? '' : 'none'}" style="display:block">${esc(a.ident) || 'No ID yet'}</span><span class="row-sub" style="display:block">${esc(typeOf(a).name)}${grouped ? '' : ', ' + esc(client(a.clientId).name)}</span></span>
       ${right}</div>`;
-  }).join('') + '</div>';
+  };
+  if (!grouped) return '<div class="rows">' + L.map(row).join('') + '</div>';
+  const groups = [];
+  for (const a of L) { const g = groups[groups.length - 1]; if (g && g.id === a.clientId) g.items.push(a); else groups.push({ id: a.clientId, items: [a] }); }
+  const shut = UI.regShut || (UI.regShut = {});
+  return groups.map(g => {
+    /* the status line counts the client's whole register, not just search matches */
+    const all = S.assets.filter(a => a.clientId === g.id), live = all.filter(a => !a.retired);
+    const n = { fail: 0, repair: 0, missing: 0, todo: 0 };
+    for (const a of live) { const l = lastInsp(a.id); if (!l) n.todo++; else if (n[l.i.result] !== undefined) n[l.i.result]++; }
+    const bits = [plural(live.length, 'item')];
+    if (n.fail) bits.push(n.fail + ' fail'); if (n.repair) bits.push(n.repair + ' repair');
+    if (n.missing) bits.push(n.missing + ' not presented'); if (n.todo) bits.push(n.todo + ' not inspected');
+    if (all.length > live.length) bits.push((all.length - live.length) + ' retired');
+    const open = !!q || !shut[g.id];
+    return `<section class="reggroup">
+      <button class="reghead" data-act="reg-group" data-id="${esc(g.id || '')}" aria-expanded="${open}"><span class="grow"><span class="reghead-name">${esc(client(g.id).name)}</span><span class="reghead-sub">${bits.join(', ')}</span></span>${ic('chevron', 20)}</button>
+      ${open ? '<div class="rows">' + g.items.map(row).join('') + '</div>' : ''}
+    </section>`;
+  }).join('');
 }
 /* Register history line: what was done, plus the proof load test flag. */
 function histAction(i) {

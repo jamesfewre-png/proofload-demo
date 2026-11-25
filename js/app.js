@@ -443,6 +443,7 @@ const ACT = {
   },
   'dl-csv'() { const v = curVisit(); download(reportFileName(v, 'csv'), 'text/csv', registerCSV(v)); toast('Spreadsheet saved.'); },
 
+  'reg-group'(el) { const s = UI.regShut || (UI.regShut = {}), id = el.dataset.id; if (UI.q.trim()) return; s[id] = !s[id]; $('#regRows').innerHTML = regRows(UI.route); const h = $(`[data-act="reg-group"][data-id="${CSS.escape(id)}"]`); if (h) h.focus(); },
   'open-asset'(el) { go({ name: 'register', assetId: el.dataset.id }, { replace: UI.route.name === 'register' && !!UI.route.assetId }); },
   'retire-asset'(el) { const a = asset(el.dataset.id); if (!a) return; a.retired = !a.retired; save(); render(); },
 
