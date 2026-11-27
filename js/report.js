@@ -508,6 +508,8 @@ async function planMerge(data) {
   M.visits.forEach(v => { if (v.status === 'open') openN.set(v.clientId, (openN.get(v.clientId) || 0) + 1); });
   const openVisitsPerClient = M.clients.filter(c => openN.get(c.id) > 1).map(c => ({ client: c.name, count: openN.get(c.id) }));
   const add = Object.assign({}, r.add, { photos: photoIds.length, audio: audioIds.length });
+  /* evaluation cap: a merge that adds items may not take an unlicensed device past the limit. Updates alone are never blocked. */
+  const evalOver = !licensed() && add.assets >= 1 && M.assets.length > EVAL_ITEM_LIMIT ? { adds: add.assets, left: itemsLeft(), limit: EVAL_ITEM_LIMIT } : null;
   const co = x => mgNorm(x && x.name);
   return {
     source: { exportedAt: data.exportedAt || '', version: data.version || '', company: I.settings.company.name || '', inspector: I.settings.inspector.name || '', prefix: I.settings.prefix },
@@ -515,7 +517,7 @@ async function planMerge(data) {
     add, matched: r.matched, updated: r.updated, filled: r.filled, kept: r.kept, heldBack: r.heldBack, duplicates: r.duplicates,
     reportNoClashes, samePrefix: (I.settings.prefix || 'LR') === prefix && incHasNo, nextNo, openVisitsPerClient,
     changes: add.clients + add.assets + add.visits + add.inspections + add.photos + add.audio + r.updated.length + r.filled.length,
-    merged: M, photoIds, audioIds
+    evalOver, merged: M, photoIds, audioIds
   };
 }
 
@@ -523,6 +525,7 @@ async function planMerge(data) {
 async function applyMerge(data) {
   const plan = await planMerge(data);
   if (!plan.changes && !plan.nextNo) return plan;
+  if (plan.evalOver) throw new Error(EVAL_CAP_MSG);
   if (mgVoided(plan.merged).length) throw new Error('Nothing was added. A signature on a visit in progress would have been cleared, so this device was left as it was. Make a fresh backup on the other device and try again.');
   for (const id of plan.photoIds) await DB.put('photos', id, data.photos[id]);
   for (const id of plan.audioIds) await DB.put('audio', id, { mime: data.audio[id].mime, buf: b64dec(data.audio[id].b64) });
@@ -1123,6 +1126,7 @@ function commitImport(items, target) {
   let clientId = target.clientId;
   if (!target.newClient && !client(clientId)) throw new Error('Choose a client for these items.');
   if (!ticked.length) return { clientId: clientId || '', count: 0 };
+  if (!canAddItems(ticked.length)) throw new Error(EVAL_CAP_MSG);
   if (target.newClient) {
     const c = { id: 'c' + uid(), name: String(target.newClient.name || '').trim(), site: String(target.newClient.site || '').trim(), contact: '', email: '', phone: '' };
     S.clients.push(c); clientId = c.id;

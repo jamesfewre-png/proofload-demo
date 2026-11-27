@@ -603,7 +603,8 @@ function licenceCard() {
       <div class="btn-row"><button class="btn btn-secondary" data-act="licence-open">Replace key</button><button class="btn btn-secondary" data-act="licence-file">Import key file</button></div>${foot}</div>`;
   const problem = LIC.status === 'invalid' ? LIC_MSG.bad : LIC.status === 'unchecked' ? LIC_MSG.noCrypto : '';
   return `<div class="card" id="licCard"><h3 class="lic-title">Licence ${evalChip()}</h3>
-      <p>Evaluation copy. Everything works, and reports carry an evaluation footer until you enter a licence key.</p>
+      <p>Evaluation copy. Reports carry an evaluation footer until you enter a licence key.</p>
+      <p class="small muted" id="licUsed" style="margin:-6px 0 12px">Evaluation copy: up to ${EVAL_ITEM_LIMIT} items. ${itemsUsed()} of ${EVAL_ITEM_LIMIT} used.</p>
       ${problem ? `<div class="banner stop" role="alert" style="margin-bottom:12px"><div>${esc(problem)}</div></div>` : ''}
       <div class="btn-row"><button class="btn btn-primary" data-act="licence-open">Enter licence key</button><button class="btn btn-secondary" data-act="licence-file">Import key file</button></div>${foot}</div>`;
 }
@@ -655,6 +656,10 @@ function mergeParts(add) {
   return joinAnd([[add.clients, 'client'], [add.assets, 'item'], [add.visits, 'visit'], [add.inspections, 'result'], [add.photos, 'photo'], [add.audio, 'voice recording']]
     .filter(x => x[0] > 0).map(x => plural(x[0], x[1])));
 }
+/* Evaluation cap banners. The button opens Settings at the Licence card. */
+const evalBanner = text => `<div class="banner note" style="margin-bottom:10px"><div>${esc(text)}<div style="margin-top:8px"><button class="btn btn-secondary" data-act="eval-licence">Open licence settings</button></div></div></div>`;
+const impEvalText = ticked => !licensed() && ticked > itemsLeft() ? 'Evaluation copy: up to ' + EVAL_ITEM_LIMIT + ' items. ' + itemsLeft() + ' more can be added on this device and ' + ticked + (ticked === 1 ? ' is' : ' are') + ' ticked. Untick some, or enter a licence key to add more.' : '';
+const mergeEvalText = o => 'Evaluation copy: up to ' + o.limit + ' items. This file adds ' + plural(o.adds, 'item') + ' and ' + (o.left ? o.left + ' more can' : 'no more can') + ' be added on this device. Enter a licence key to add these records.';
 function viewMerge() {
   const m = UI.merge, p = m.plan, src = p.source;
   const cap = (arr, fn) => arr.slice(0, 20).map(fn).join('') + (arr.length > 20 ? `<li class="muted">and ${arr.length - 20} more</li>` : '');
@@ -673,6 +678,7 @@ function viewMerge() {
   return `<div class="page"><header class="page-head"><div><h1>Check before adding records</h1><p class="sub">${sub}</p></div></header>
     <div class="page-body" data-scroll="merge"><div class="wrap imp-wrap">
       <div class="banner note" style="margin-bottom:10px">${ic('download', 22)}<div>Nothing on this device is deleted. Save a backup of this device first, so you can go back if you need to.<div style="margin-top:8px"><button class="btn btn-secondary" data-act="backup">${ic('download')}Save a backup file</button></div></div></div>
+      ${p.evalOver ? evalBanner(mergeEvalText(p.evalOver)) : ''}
       ${p.differentBusiness ? `<div class="banner stop" style="margin-bottom:10px">${ic('alert', 22)}<div>This file is from ${esc(src.company)}, not ${esc(S.settings.company.name || 'this business')}. Check it is the right file before adding it.</div></div>` : ''}
       ${sum ? `<p class="imp-sum" aria-live="polite"><b>${esc(sum)}</b></p>` : ''}
       ${card('Matched to records already here', p.matched.clients.map(c => ({ c })).concat(p.matched.assets.map(a => ({ a }))), x => x.c ? `<li>${esc(x.c.name)} matches ${esc(x.c.localName)}</li>` : `<li>${esc(x.a.label)}, ${esc(x.a.client)}</li>`)}
@@ -684,7 +690,7 @@ function viewMerge() {
       ${reportCard}
       ${p.openVisitsPerClient.length ? `<div class="card"><ul class="small" style="margin:0;padding-left:18px">${cap(p.openVisitsPerClient, o => `<li>${esc(o.client)} will have ${plural(o.count, 'visit')} in progress.</li>`)}</ul></div>` : ''}
     </div></div>
-    <div class="imp-foot"><div class="wrap imp-wrap"><div class="btn-row"><button class="btn btn-secondary" data-act="merge-cancel">Cancel</button><button class="btn btn-primary" id="mergeGo" data-act="merge-go" ${nothing || m.busy ? 'disabled' : ''}>${nothing ? 'Nothing new to add' : 'Add these records'}</button></div></div></div></div>`;
+    <div class="imp-foot"><div class="wrap imp-wrap"><div class="btn-row"><button class="btn btn-secondary" data-act="merge-cancel">Cancel</button><button class="btn btn-primary" id="mergeGo" data-act="merge-go" ${nothing || m.busy || p.evalOver ? 'disabled' : ''}>${nothing ? 'Nothing new to add' : 'Add these records'}</button></div></div></div></div>`;
 }
 
 /* ---------- overlay content ---------- */
@@ -787,13 +793,14 @@ function impReview(m) {
   return `<div class="page"><header class="page-head"><div><h1>Check before importing</h1><p class="sub">${esc(m.clientName)}${m.clientId ? '' : ' (new client)'}</p></div></header>
     <div class="page-body" data-scroll="import"><div class="wrap imp-wrap">
       <p class="imp-sum" id="impSum" aria-live="polite"><b>${esc(sum.text)}</b></p>
+      <div id="impEval">${impEvalText(sum.toImport) ? evalBanner(impEvalText(sum.toImport)) : ''}</div>
       ${ov ? `<div class="banner note" style="margin-bottom:10px">${esc(client(m.clientId).name)} has a visit in progress. Imported items are not added to it. They come forward from the next visit you start.</div>` : ''}
       ${items.truncated ? '<div class="banner note" style="margin-bottom:10px">Only the first 5000 rows are shown.</div>' : ''}
       <div class="filters" role="group" aria-label="Show">${F.map(([f, l]) => `<button class="filter" data-act="imp-filter" data-f="${f}" aria-pressed="${m.filter === f}">${l} ${cn[f]}</button>`).join('')}</div>
       <div id="impList">${items.map((it, i) => `<div class="card imp-card" data-card="${i}" ${impIsOn(it, m.filter) ? '' : 'hidden'}>${impCardInner(it, i)}</div>`).join('')}</div>
       <p class="small muted" style="margin-top:12px">Missing IDs and WLLs still have to be filled in before a report can be issued.</p>
     </div></div>
-    <div class="imp-foot"><div class="wrap imp-wrap"><div class="btn-row"><button class="btn btn-secondary" data-act="imp-back">Back</button><button class="btn btn-primary" id="impGo" data-act="imp-commit" ${sum.toImport ? '' : 'disabled'}>${impBtnLabel(sum.toImport)}</button></div></div></div></div>`;
+    <div class="imp-foot"><div class="wrap imp-wrap"><div class="btn-row"><button class="btn btn-secondary" data-act="imp-back">Back</button><button class="btn btn-primary" id="impGo" data-act="imp-commit" ${sum.toImport && !impEvalText(sum.toImport) ? '' : 'disabled'}>${impBtnLabel(sum.toImport)}</button></div></div></div></div>`;
 }
 function sheetRevise(v) {
   return `<div class="sheet" role="dialog" aria-labelledby="reviseTitle">

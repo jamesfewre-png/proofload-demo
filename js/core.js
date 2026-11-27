@@ -1,7 +1,7 @@
 'use strict';
 /* TagRound core: constants, storage, state, helpers. No network calls anywhere in this app. */
 
-const APP = { name: 'TagRound', version: '0.4.5' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
+const APP = { name: 'TagRound', version: '0.4.6' };  /* renamed from Proofload in 0.3.1; storage keeps the internal name 'proofload' */
 
 const TAGS = {
   red:    { name: 'Red',    hex: '#D7332A', on: '#FFFFFF' },
@@ -401,6 +401,7 @@ function voicePrompt() {
 
 /* ---------- record creation ---------- */
 function newAsset(clientId, typeId, like) {
+  if (!canAddItems(1)) throw new Error(EVAL_CAP_MSG);
   const t = typeById(typeId);
   const a = { id: 'a' + uid(), clientId, type: typeId, ident: '', wll: '', wllUnit: 't', make: '', certNo: '', desc: '', location: '', std: t.std, retired: false, createdAt: todayISO() };
   if (like) Object.assign(a, { wll: like.wll, wllUnit: like.wllUnit, make: like.make, desc: like.desc, location: like.location, std: like.std });
@@ -564,6 +565,12 @@ async function refreshLicence() {
   return LIC;
 }
 const licensed = () => LIC.status === 'valid';
+/* Evaluation cap: an unlicensed copy holds up to 20 register items (retired ones count). Only adding is limited; stored data is never hidden or removed. */
+const EVAL_ITEM_LIMIT = 20;
+const EVAL_CAP_MSG = 'Evaluation copy: up to ' + EVAL_ITEM_LIMIT + ' items. Enter a licence key to add more.';
+const itemsUsed = () => S.assets.length;
+const itemsLeft = () => licensed() ? Infinity : Math.max(0, EVAL_ITEM_LIMIT - itemsUsed());
+const canAddItems = n => itemsLeft() >= n;
 const licenceLine = () => licensed() ? 'Licensed to ' + LIC.info.name : EVAL_FOOTER;
 const licenceLapsed = (today = todayISO()) => licensed() && today > LIC.info.updatesUntil;
 const lapseText = () => 'Updates and support ended ' + fmtDate(LIC.info.updatesUntil) + '. Standards and defect lists may be out of date. ' + SELLER.contact + ' to renew.';

@@ -75,6 +75,13 @@ function openOverlay(html, quiet) {
 }
 function closeOverlay() { $('#overlay').innerHTML = ''; confirmFn = null; UI.lic = null; }
 function ask(title, body, okLabel, fn, danger) { openOverlay(sheetConfirm(title, body, okLabel, danger)); confirmFn = fn; }
+/* Evaluation cap: opens Settings at the Licence card. evalCapped(n) is true (and says so) when n more items cannot be added. */
+function toLicence() { closeOverlay(); go({ name: 'settings' }); const c = $('#licCard'); if (c) c.scrollIntoView({ block: 'center' }); }
+function evalCapped(n = 1) {
+  if (canAddItems(n)) return false;
+  ask('Evaluation copy: up to ' + EVAL_ITEM_LIMIT + ' items.', 'Enter a licence key to add more.', 'Open licence settings', toLicence);
+  return true;
+}
 let toastTimer = null, toastUndo = null;
 /* With undoFn the toast also holds an Undo button and stays 5 s; a new toast replaces the old one and its pending Undo. */
 function toast(msg, undoFn) {
@@ -179,7 +186,8 @@ function impRefresh() {
   });
   const s = $('#impSum'); if (s) s.innerHTML = '<b>' + esc(sum.text) + '</b>';
   [['all', 'All'], ['check', 'To check'], ['dup', 'Duplicates']].forEach(([f, l]) => { const b = $('.filter[data-f="' + f + '"]'); if (b) b.textContent = l + ' ' + cn[f]; });
-  const go = $('#impGo'); if (go) { go.textContent = impBtnLabel(sum.toImport); go.disabled = !sum.toImport; }
+  const ev = impEvalText(sum.toImport), eb = $('#impEval'); if (eb) eb.innerHTML = ev ? evalBanner(ev) : '';
+  const go = $('#impGo'); if (go) { go.textContent = impBtnLabel(sum.toImport); go.disabled = !sum.toImport || !!ev; }
 }
 function impChange(el) {
   const m = UI.imp, k = el.dataset.imp; if (!m) return;
@@ -227,7 +235,9 @@ async function licenceFlow(text) {
 
 /* ---------- actions ---------- */
 const ACT = {
+  'eval-licence'() { toLicence(); },
   'imp-start'() {
+    if (evalCapped()) return;
     UI.impSheet = { mode: S.clients.length ? 'existing' : 'new', clientId: S.clients.length === 1 ? S.clients[0].id : '', name: '', site: '', error: '' };
     openOverlay(sheetImport());
   },
@@ -293,11 +303,12 @@ const ACT = {
   filter(el) { UI.filter = el.dataset.f; renderList(); },
   'add-item'() { setPanel('pick'); },
   'pick-type'(el) {
+    if (evalCapped()) return;
     const v = curVisit(), a = newAsset(v.clientId, el.dataset.type), i = newInsp(v.id, a.id);
     UI.filter = 'all'; save(); setPanel('item', i.id); focusIdent();
   },
   'imp-visit'() {
-    const v = curVisit(); if (!v || v.status !== 'open') return;
+    const v = curVisit(); if (!v || v.status !== 'open' || evalCapped()) return;
     UI.impSheet = { mode: 'existing', clientId: v.clientId, visitId: v.id, name: '', site: '', error: '' };
     openOverlay(sheetImport());
   },
@@ -347,7 +358,7 @@ const ACT = {
   'set-tagstart'(el) { S.settings.tagStart = el.dataset.start === '11' ? 11 : 0; save(); render(); },
   'set-unit'(el) { const a = curAsset(); if (!a) return; a.wllUnit = el.dataset.unit; save(); render(); },
   'add-like'() {
-    const i = curInsp(); if (!i) return;
+    const i = curInsp(); if (!i || evalCapped()) return;
     const a = asset(i.assetId), v = visit(i.visitId), a2 = newAsset(v.clientId, a.type, a), i2 = newInsp(v.id, a2.id);
     UI.filter = 'all'; save(); setPanel('item', i2.id); focusIdent();
     toast('Added another ' + typeOf(a).name.toLowerCase() + '. Enter its ID.');
